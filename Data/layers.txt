@@ -1,0 +1,28 @@
+Density layering
+00_Air
+01_sediment
+02_coalPCM
+03_coalGreta
+04_volcanic_onshore
+05_volcanic_offshore
+05_basement
+
+3D Underworld layering
+00_Elevation_0.05
+01_Top_Maules_CM
+02_Base_Maules_CM
+03_Base_Jurassic
+04_Top_Jurassic_Coal
+05_Base_Jurassic_Coal
+06_Top_Greta_CM
+07_Base_Greta_CM
+08_Top_PCM
+09_Base_PCM
+10_Top_Reid_Dome_Beds
+11_Base_Reid_Dome_Beds
+12_Denison_Volcanics_northern
+13_Denison_Volcanics_southern
+14_Complete_Volcanics_Onshore
+15_Offshore_Volcanics
+16_Complete_Basement
+
