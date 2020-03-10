@@ -1,0 +1,12 @@
+material index,voxel layer,name,density,density error,thermal conductivity,thermal conductivity error,heat production,heat production error,hydraulic conductivity,hydraulic conductivity error
+0,-1 0,Air,2650,,3,,0,,1,
+1,1 2,Maules Creek Coal,1900,,0.3,,0,,1,
+2,3,Jurassic sediments,2310,140,2,,1.25E-06,,1,
+3,4 5,Jurassic coal,2180,,0.3,,0,,1,
+4,6 7,Greta coal,1900,,0.3,,0,,1,
+5,8,Permian Coal Measures,2180,360,0.3,,0,,1,
+6,9,Permian sediments,2370,140,2,,1.25E-06,,1,
+7,10 11,Reid Dome Beds,2540,110,2,,1.25E-06,,1,
+8,12 13,Denison Volcanics,2950,60,3,,5.00E-07,,1,
+9,14 15,Complete Volcanics,2950,60,3,,5.00E-07,,1,
+10,16 17,Basement,2650,50,3,,2.00E-06,,1,
