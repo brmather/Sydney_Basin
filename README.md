@@ -4,9 +4,8 @@ The thermal and hydraulic regime is solved over a geological model of the Sydney
 
 #### Dependencies
 
+- [`underworld2`](https://github.com/underworldcode/underworld2)
 - [`stripy`](https://github.com/underworldcode/stripy)
-- [`mpi4py`](https://mpi4py.readthedocs.io/en/stable/install.html)
-- [`h5py`](http://docs.h5py.org/en/stable/quick.html) (parallel-enabled)
 
 ## Geological model
 
@@ -15,15 +14,15 @@ The following geological surfaces are stored in the `Data` directory:
 1. Elevation
 2. Maules (top)
 3. Maules (bottom)
-4. Jurassic (bottom)
-5. Jurassic coal (top)
-6. Jurassic coal (bottom)
+4. Jurassic coal (top)
+5. Jurassic coal (bottom)
+6. Jurassic (bottom)
 7. Greta CM (top)
 8. Greta CM (bottom)
 9. PCM (top)
-10. PCM (bottom)
-11. Reid Dome Beds (top)
-12. Reid Dome Beds (bottom)
+10. Reid Dome Beds (top)
+11. Reid Dome Beds (bottom)
+12. PCM (bottom)
 13. Denison Volcanics (top)
 14. Denison Volcanics (bottom)
 15. Complete volcanics onshore
