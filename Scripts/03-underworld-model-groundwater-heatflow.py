@@ -17,6 +17,7 @@ import underworld as uw
 
 parser = argparse.ArgumentParser(description='Process some model arguments.')
 parser.add_argument('echo', type=str, metavar='PATH', help='I/O location')
+parser.add_argument('--res', type=int, metavar='N', nargs='+', default=[20,20,50], help='Resolution in X,Y,Z directions')
 parser.add_argument('-v', action='store_true', required=False, default=False, help="Verbose output")
 args = parser.parse_args()
 
@@ -25,6 +26,9 @@ data_dir = args.echo
 verbose  = args.v
 Tmin = 0.0
 Tmax = 100.0
+
+# global size
+Nx, Ny, Nz = args.res
 
 
 with np.load(data_dir+"sydney_basin_surfaces.npz", "r") as npz:
@@ -54,10 +58,6 @@ n_layers = grid_list.shape[0]
 
 
 ## Set up the mesh
-
-# global size
-Nx, Ny, Nz = 20, 20, 50
-
 
 deformedmesh = True
 elementType = "Q1"
