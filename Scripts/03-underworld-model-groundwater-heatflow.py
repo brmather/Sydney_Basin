@@ -8,7 +8,6 @@
 import numpy as np
 import os
 import argparse
-import stripy
 from scipy import interpolate
 from scipy.spatial import cKDTree
 
@@ -320,8 +319,8 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
                                         (xdmf_info_swarm, 'heatProductionSwarm', heatProduction),
                                         ]:
     
-    xdmf_info_var = save_object.save(save_name+'.h5')
-    save_object.xdmf(save_name+'.xdmf', xdmf_info_var, save_name, xdmf_info, 'TheMesh')
+    xdmf_info_var = save_object.save(data_dir+save_name+'.h5')
+    save_object.xdmf(data_dir+save_name+'.xdmf', xdmf_info_var, save_name, xdmf_info, 'TheMesh')
 
     if save_name.endswith("Swarm"):
         # project swarm variables to the mesh
@@ -329,5 +328,5 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
         hydproj.solve()
 
         field_name = save_name[:-5]+'Field'
-        xdmf_info_var = phiField.save(field_name+'.h5')
-        phiField.xdmf(field_name+'.xdmf', xdmf_info_var, field_name, xdmf_info_mesh, "TheMesh")
+        xdmf_info_var = phiField.save(data_dir+field_name+'.h5')
+        phiField.xdmf(data_dir+field_name+'.xdmf', xdmf_info_var, field_name, xdmf_info_mesh, "TheMesh")
