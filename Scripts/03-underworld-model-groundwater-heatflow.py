@@ -299,11 +299,11 @@ gwsolver.solve()
 
 ## Save to HDF5
 
-xdmf_info_mesh  = mesh.save('mesh.h5')
-xdmf_info_swarm = swarm.save('swarm.h5')
+xdmf_info_mesh  = mesh.save(data_dir+'mesh.h5')
+xdmf_info_swarm = swarm.save(data_dir+'swarm.h5')
 
-xdmf_info_matIndex = materialIndex.save('materialIndex.h5')
-materialIndex.xdmf('materialIndex.xdmf', xdmf_info_matIndex, 'materialIndex', xdmf_info_swarm, 'TheSwarm')
+xdmf_info_matIndex = materialIndex.save(data_dir+'materialIndex.h5')
+materialIndex.xdmf(data_dir+'materialIndex.xdmf', xdmf_info_matIndex, 'materialIndex', xdmf_info_swarm, 'TheSwarm')
 
 
 # dummy mesh variable
