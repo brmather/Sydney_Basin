@@ -255,6 +255,30 @@ for i, index in enumerate(matIndex):
     heatProduction.data[mask_material]       = H[i]
 
 
+
+## Depth-dependent hydraulic conductivity
+
+The drop-off in hydraulic conductivity is proportional to depth
+
+interp.values = grid_list[0]
+swarm_topography = interp((swarm.data[:,1],swarm.data[:,0]))
+
+beta = 9.3e-3
+depth = -1 * np.minimum(swarm.data[:,2] - swarm_topography, 0.0)
+
+# fn_hydraulicDiffusivity = swarm.add_variable( dataType="double", count=1 )
+fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
+
+# average out variation within a cell
+for cell in range(0, mesh.elementsLocal):
+    mask_cell = swarm.owningCell.data == cell
+    idx_cell  = np.nonzero(mask_cell)[0]
+    
+    fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].mean()
+
+
+
+
 ## Set up heat equation
 if uw.mpi.rank == 0 and verbose:
     print("Solving heat equation...")
@@ -289,7 +313,7 @@ gMapFn = -g*rho_water*Storage
 gwadvDiff = uw.systems.SteadyStateDarcyFlow(
                                             velocityField    = velocityField, \
                                             pressureField    = gwPressureField, \
-                                            fn_diffusivity   = hydraulicDiffusivity, \
+                                            fn_diffusivity   = fn_hydraulicDiffusivity, \
                                             conditions       = [gwPressureBC], \
                                             fn_bodyforce     = -gMapFn, \
                                             voronoi_swarm    = swarm, \
