@@ -145,6 +145,9 @@ initial_temperature = linear_gradient*(Tmax - Tmin) + Tmin
 gwPressureField.data[:]  = initial_pressure.reshape(-1,1)
 temperatureField.data[:] = initial_temperature.reshape(-1,1)
 
+temperatureField.data[topWall] = Tmin
+temperatureField.data[bottomWall] = Tmax
+
 # ## Set up the swarm particles
 # 
 # It is best to set only one particle per cell, to prevent variations in hydaulic diffusivity within cells.
