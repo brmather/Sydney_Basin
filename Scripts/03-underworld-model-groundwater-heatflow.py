@@ -261,13 +261,14 @@ for i, index in enumerate(matIndex):
 # The drop-off in hydraulic conductivity is proportional to depth
 
 def fn_kappa(k0, depth, beta):
-    return k0*np.exp(-beta*depth)
+    """ Wei et al. (1995) """
+    return k0*(1.0 - depth/(58.0+1.02*depth))**3
 
 interp.values = grid_list[0]
 swarm_topography = interp((swarm.data[:,1],swarm.data[:,0]))
 
 beta = 9.3e-3
-depth = -1 * np.minimum(swarm.data[:,2] - swarm_topography, 0.0)
+depth = -1*(swarm.data[:,2] - zmax)
 
 fn_hydraulicDiffusivity = swarm.add_variable( dataType="double", count=1 )
 fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
@@ -278,7 +279,6 @@ for cell in range(0, mesh.elementsLocal):
     idx_cell  = np.nonzero(mask_cell)[0]
     
     fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].mean()
-
 
 
 
