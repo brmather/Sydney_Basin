@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
+# # 4 - Optimisation: groundwater + heat flow
 
-# 4 - Underworld nonlinear model: groundwater + heat flow
-
+# +
 import numpy as np
 import os
 import argparse
@@ -11,25 +11,34 @@ from scipy.spatial import cKDTree
 
 import underworld as uw
 
-
-parser = argparse.ArgumentParser(description='Process some model arguments.')
-parser.add_argument('echo', type=str, metavar='PATH', help='I/O location')
-parser.add_argument('-r', '--res', type=int, metavar='N', nargs='+', default=[20,20,50], help='Resolution in X,Y,Z directions')
-parser.add_argument('-v', '--verbose', action='store_true', required=False, default=False, help="Verbose output")
-parser.add_argument('--Tmin', type=float, required=False, default=298.0, help="Minimum temperature")
-parser.add_argument('--Tmax', type=float, required=False, default=500.0, help="Maximum temperature")
-args = parser.parse_args()
-
-
-data_dir = args.echo
-verbose  = args.verbose
-Tmin = args.Tmin
-Tmax = args.Tmax
-
-# global size
-Nx, Ny, Nz = args.res
+# +
+if uw.mpi.size > 1:
+    parser = argparse.ArgumentParser(description='Process some model arguments.')
+    parser.add_argument('echo', type=str, metavar='PATH', help='I/O location')
+    parser.add_argument('-r', '--res', type=int, metavar='N', nargs='+', default=[20,20,50], help='Resolution in X,Y,Z directions')
+    parser.add_argument('-v', '--verbose', action='store_true', required=False, default=False, help="Verbose output")
+    parser.add_argument('--Tmin', type=float, required=False, default=298.0, help="Minimum temperature")
+    parser.add_argument('--Tmax', type=float, required=False, default=500.0, help="Maximum temperature")
+    args = parser.parse_args()
 
 
+    data_dir = args.echo
+    verbose  = args.verbose
+    Tmin = args.Tmin
+    Tmax = args.Tmax
+    Nx, Ny, Nz = args.res # global size
+
+else:
+    data_dir = "../Data/"
+    verbose  = True
+    Tmin = 298.0
+    Tmax = 500.0
+    Nx, Ny, Nz = 20,20,50 # global size
+# -
+
+# ## Import geological surfaces
+
+# +
 with np.load(data_dir+"sydney_basin_surfaces.npz", "r") as npz:
     grid_list    = npz["layers"]
     grid_Xcoords = npz['Xcoords']
@@ -54,10 +63,11 @@ grid_list.append(np.full_like(grid_list[0], zmin))
 grid_list = np.array(grid_list)
 
 n_layers = grid_list.shape[0]
+# -
 
+# ## Set up the mesh
 
-## Set up the mesh
-
+# +
 deformedmesh = True
 elementType = "Q1"
 mesh = uw.mesh.FeMesh_Cartesian( elementType = (elementType), 
@@ -76,15 +86,13 @@ Xcoords = np.unique(coords[:,0])
 Ycoords = np.unique(coords[:,1])
 Zcoords = np.unique(coords[:,2])
 nx, ny, nz = Xcoords.size, Ycoords.size, Zcoords.size
-
+# -
 
 # ### Wrap mesh to surface topography
-# 
+#  
 # We want to deform z component so that we bunch up the mesh where we have valleys. The total number of cells should remain the same, only the vertical spacing should vary.
 
-# In[ ]:
-
-
+# +
 interp.values = grid_list[0]
 local_topography = interp((mesh.data[:,1],mesh.data[:,0]))
 
@@ -103,20 +111,21 @@ with mesh.deform_mesh():
     
     mesh.data[:,2] += dzcube.ravel()
     coords = mesh.data
+# -
 
 
 # ## Set up the types of boundary conditions
-# 
+#
 # We'll set the left, right and bottom walls such that flow cannot pass through them, only parallel.
 # In other words for groundwater pressure $P$:
-# 
+#
 # $ \frac{\partial P}{\partial x}=0$ : left and right walls
-# 
+#
 # $ \frac{\partial P}{\partial y}=0$ : bottom wall
-# 
+#
 # This is only solvable if there is topography or a non-uniform upper pressure BC.
 
-
+# +
 topWall = mesh.specialSets["MaxK_VertexSet"]
 bottomWall = mesh.specialSets["MinK_VertexSet"]
 
@@ -127,9 +136,7 @@ temperatureBC = uw.conditions.DirichletCondition( variable        = temperatureF
                                                   indexSetsPerDof = (topWall+bottomWall))
 
 
-
-
-
+# +
 # lower groundwater pressure BC - value is relative to gravity
 maxgwpressure = 0.9
 
@@ -148,21 +155,17 @@ temperatureField.data[:] = initial_temperature.reshape(-1,1)
 
 temperatureField.data[topWall] = Tmin
 temperatureField.data[bottomWall] = Tmax
+# -
 
 # ## Set up the swarm particles
-# 
+#
 # It is best to set only one particle per cell, to prevent variations in hydaulic diffusivity within cells.
-
-
 
 swarm         = uw.swarm.Swarm( mesh=mesh )
 swarmLayout   = uw.swarm.layouts.PerCellGaussLayout(swarm=swarm,gaussPointCount=4)
 swarm.populate_using_layout( layout=swarmLayout )
 
-
-# In[ ]:
-
-
+# +
 materialIndex  = swarm.add_variable( dataType="int",    count=1 )
 swarmVelocity  = swarm.add_variable( dataType="double", count=3 )
 
@@ -170,9 +173,7 @@ hydraulicDiffusivity = swarm.add_variable( dataType="double", count=1 )
 thermalDiffusivity   = swarm.add_variable( dataType="double", count=1 )
 heatProduction       = swarm.add_variable( dataType="double", count=1 )
 a_exponent           = swarm.add_variable( dataType="double", count=1 )
-
-
-# In[ ]:
+# -
 
 
 for cell in range(0, mesh.elementsLocal):
@@ -193,18 +194,19 @@ for cell in range(0, mesh.elementsLocal):
 
 
 # ### Assign material properties
-# 
+#
 # Use level sets to assign hydraulic diffusivities to a region on the mesh corresponding to any given material index.
-# 
-# - H       : rate of heat production
-# - rho     : density
-# - k_h     : hydraulic conductivity
-# - k_t     : thermal conductivity
-# - kappa_h : hydraulic diffusivity
-# - kappa_t : thermal diffusivity
-# 
+#
+# - $H$       : rate of heat production
+# - $\rho$     : density
+# - $k_h$     : hydraulic conductivity
+# - $k_t$     : thermal conductivity
+# - $\kappa_h$ : hydraulic diffusivity
+# - $\kappa_t$ : thermal diffusivity
+#
 # First, there are some lithologies that need to be collapsed.
 
+# +
 def read_material_index(filename, cols):
     """
     Reads the material index with specified columns
@@ -235,13 +237,10 @@ def read_material_index(filename, cols):
             
     return layerIndex, matIndex, matName, list(read_columns.T)
 
-
-
 cols = [3,5,7,9,11]
 layerIndex, matIndex, matName, [rho, kt, H, kh, a] = read_material_index(data_dir+"material_properties.csv", cols)
 
-
-
+# +
 voxel_model_condensed = materialIndex.data.flatten()
 
 # condense lith(s) to index(s)
@@ -258,11 +257,13 @@ for i, index in enumerate(matIndex):
     a_exponent.data[mask_material]           = a[i]
 
 
+# -
 
-## Depth-dependent hydraulic conductivity
+# ### Depth-dependent conductivity
 #
 # The drop-off in hydraulic conductivity is proportional to depth
 
+# +
 def fn_kappa(k0, depth, beta):
     """ Wei et al. (1995) """
     return k0*(1.0 - depth/(58.0+1.02*depth))**3
@@ -284,13 +285,13 @@ for cell in range(0, mesh.elementsLocal):
     fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].mean()
 
 
+# +
 def fn_kappa_T(k0, T, a=0.33):
     return k0*(298.0/T)**a
 
-
 fn_thermalDiffusivity = thermalDiffusivity*(298.0/temperatureField)**a_exponent
 
-
+# +
 ## Set up heat equation
 if uw.mpi.rank == 0 and verbose:
     print("Solving heat equation...")
@@ -306,20 +307,18 @@ heatsolver.solve(nonLinearIterate=True)
 
 thermalDiffusivity.data[:] = fn_thermalDiffusivity.evaluate(swarm)
 
-
-
-if deformedmesh:
-    g = uw.function.misc.constant((0.,0.,-1.))
-else:
-    g = uw.function.misc.constant((0.,0.,0.))
-
-
+# +
 ## Set up groundwater equation
 if uw.mpi.rank == 0 and verbose:
     print("Solving grounwater equation...")
 
 Storage = 1.
 rho_water = 1.
+
+if deformedmesh:
+    g = uw.function.misc.constant((0.,0.,-1.))
+else:
+    g = uw.function.misc.constant((0.,0.,0.))
 
 gwPressureGrad = gwPressureField.fn_gradient
 
@@ -335,11 +334,11 @@ gwadvDiff = uw.systems.SteadyStateDarcyFlow(
 
 gwsolver = uw.systems.Solver(gwadvDiff)
 gwsolver.solve()
+# -
 
+# ## Save to HDF5
 
-
-## Save to HDF5
-
+# +
 xdmf_info_mesh  = mesh.save(data_dir+'mesh.h5')
 xdmf_info_swarm = swarm.save(data_dir+'swarm.h5')
 
