@@ -1,9 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # 3 - Underworld model: groundwater + heat flow
-# 
-# Set up the Underworld model with the appropriate material properties to solve steady state Darcy flow and heat flow.
+# 4 - Underworld nonlinear model: groundwater + heat flow
 
 import numpy as np
 import os
@@ -15,6 +13,7 @@ import underworld as uw
 
 
 parser = argparse.ArgumentParser(description='Process some model arguments.')
+parser.add_argument('echo', type=str, metavar='PATH', help='I/O location')
 parser.add_argument('-r', '--res', type=int, metavar='N', nargs='+', default=[20,20,50], help='Resolution in X,Y,Z directions')
 parser.add_argument('-v', '--verbose', action='store_true', required=False, default=False, help="Verbose output")
 parser.add_argument('--Tmin', type=float, required=False, default=298.0, help="Minimum temperature")
@@ -141,6 +140,7 @@ linear_gradient = 1.0 - znorm
 
 initial_pressure = linear_gradient*maxgwpressure
 initial_temperature = linear_gradient*(Tmax - Tmin) + Tmin
+initial_temperature = np.clip(initial_temperature, Tmin, Tmax)
 
 
 gwPressureField.data[:]  = initial_pressure.reshape(-1,1)
@@ -169,6 +169,7 @@ swarmVelocity  = swarm.add_variable( dataType="double", count=3 )
 hydraulicDiffusivity = swarm.add_variable( dataType="double", count=1 )
 thermalDiffusivity   = swarm.add_variable( dataType="double", count=1 )
 heatProduction       = swarm.add_variable( dataType="double", count=1 )
+a_exponent           = swarm.add_variable( dataType="double", count=1 )
 
 
 # In[ ]:
@@ -236,8 +237,8 @@ def read_material_index(filename, cols):
 
 
 
-cols = [3,5,7,9]
-layerIndex, matIndex, matName, [rho, kt, H, kh] = read_material_index(data_dir+"material_properties.csv", cols)
+cols = [3,5,7,9,11]
+layerIndex, matIndex, matName, [rho, kt, H, kh, a] = read_material_index(data_dir+"material_properties.csv", cols)
 
 
 
@@ -254,6 +255,7 @@ for i, index in enumerate(matIndex):
     hydraulicDiffusivity.data[mask_material] = kh[i]
     thermalDiffusivity.data[mask_material]   = kt[i]
     heatProduction.data[mask_material]       = H[i]
+    a_exponent.data[mask_material]           = a[i]
 
 
 
@@ -282,19 +284,27 @@ for cell in range(0, mesh.elementsLocal):
     fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].mean()
 
 
+def fn_kappa_T(k0, T, a=0.33):
+    return k0*(298.0/T)**a
+
+
+fn_thermalDiffusivity = thermalDiffusivity*(298.0/temperatureField)**a_exponent
+
 
 ## Set up heat equation
 if uw.mpi.rank == 0 and verbose:
     print("Solving heat equation...")
 
 heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField,
-                                      fn_diffusivity   = thermalDiffusivity,
+                                      fn_diffusivity   = fn_thermalDiffusivity,
                                       fn_heating       = heatProduction,
                                       conditions       = temperatureBC
                                       )
 
 heatsolver = uw.systems.Solver(heateqn)
-heatsolver.solve()
+heatsolver.solve(nonLinearIterate=True)
+
+thermalDiffusivity.data[:] = fn_thermalDiffusivity.evaluate(swarm)
 
 
 
@@ -338,12 +348,21 @@ materialIndex.xdmf(data_dir+'materialIndex.xdmf', xdmf_info_matIndex, 'materialI
 
 
 # dummy mesh variable
-phiField = mesh.add_variable( nodeDofCount=1 )
+phiField        = mesh.add_variable( nodeDofCount=1 )
+heatflowField   = mesh.add_variable( nodeDofCount=3 )
+
+
+# calculate heat flux
+kTproj = uw.utils.MeshVariable_Projection(phiField, thermalDiffusivity, swarm)
+kTproj.solve()
+
+heatflowField.data[:] = temperatureField.fn_gradient.evaluate(mesh) * -phiField.data.reshape(-1,1)
 
 
 for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', velocityField),
                                         (xdmf_info_mesh, 'pressureField', gwPressureField),
                                         (xdmf_info_mesh, 'temperatureField', temperatureField),
+                                        (xdmf_info_mesh, 'heatflowField', heatflowField),
                                         (xdmf_info_swarm, 'materialIndexSwarm', materialIndex),
                                         (xdmf_info_swarm, 'hydraulicDiffusivitySwarm', fn_hydraulicDiffusivity),
                                         (xdmf_info_swarm, 'thermalDiffusivitySwarm', thermalDiffusivity),
