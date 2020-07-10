@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# %%
 
 # # 3 - Underworld model: groundwater + heat flow
 # 
@@ -15,6 +16,7 @@ import underworld as uw
 
 
 parser = argparse.ArgumentParser(description='Process some model arguments.')
+parser.add_argument('echo', type=str, metavar='PATH', help='I/O location')
 parser.add_argument('-r', '--res', type=int, metavar='N', nargs='+', default=[20,20,50], help='Resolution in X,Y,Z directions')
 parser.add_argument('-v', '--verbose', action='store_true', required=False, default=False, help="Verbose output")
 parser.add_argument('--Tmin', type=float, required=False, default=298.0, help="Minimum temperature")
@@ -83,7 +85,7 @@ nx, ny, nz = Xcoords.size, Ycoords.size, Zcoords.size
 # 
 # We want to deform z component so that we bunch up the mesh where we have valleys. The total number of cells should remain the same, only the vertical spacing should vary.
 
-# In[ ]:
+# %%
 
 
 interp.values = grid_list[0]
@@ -160,7 +162,7 @@ swarmLayout   = uw.swarm.layouts.PerCellGaussLayout(swarm=swarm,gaussPointCount=
 swarm.populate_using_layout( layout=swarmLayout )
 
 
-# In[ ]:
+# %%
 
 
 materialIndex  = swarm.add_variable( dataType="int",    count=1 )
@@ -171,7 +173,7 @@ thermalDiffusivity   = swarm.add_variable( dataType="double", count=1 )
 heatProduction       = swarm.add_variable( dataType="double", count=1 )
 
 
-# In[ ]:
+# %%
 
 
 for cell in range(0, mesh.elementsLocal):
