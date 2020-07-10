@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-# # 4 - Optimisation: groundwater + heat flow
+# # 5 - Optimisation: groundwater + heat flow
 
 # +
 import numpy as np
@@ -80,6 +80,7 @@ mesh = uw.mesh.FeMesh_Cartesian( elementType = (elementType),
 gwPressureField            = mesh.add_variable( nodeDofCount=1 )
 temperatureField           = mesh.add_variable( nodeDofCount=1 )
 velocityField              = mesh.add_variable( nodeDofCount=3 )
+heatProductionField        = mesh.add_variable( nodeDofCount=1 )
 
 
 coords = mesh.data
@@ -260,10 +261,11 @@ swarm_topography = interp((swarm.data[:,1],swarm.data[:,0]))
 
 beta = 9.3e-3
 depth = -1*(swarm.data[:,2] - zmax)
+depth = -1*np.clip(swarm.data[:,2], zmin, 0.0)
 
 # +
 Storage = 1.
-rho_water = 1.
+rho_water = 1000.
 
 if deformedmesh:
     g = uw.function.misc.constant((0.,0.,-1.))
@@ -333,7 +335,7 @@ for i, name in enumerate(well_name):
         
         if exception:
             well_elevation[i] -= 10
-            
+
 
 # + active=""
 # mask_wells = np.zeros_like(well_E, dtype=bool)
@@ -415,6 +417,10 @@ def forward_model(x):
         thermalDiffusivity.data[mask_material]   = kt[i]
         heatProduction.data[mask_material]       = H[i]
         a_exponent.data[mask_material]           = a[i]
+        
+    # project HP to mesh
+    HPproj = uw.utils.MeshVariable_Projection(heatProductionField, heatProduction, swarm)
+    HPproj.solve()
     
     # depth-dependent hydraulic conductivity
     fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
@@ -423,36 +429,42 @@ def forward_model(x):
         mask_cell = swarm.owningCell.data == cell
         idx_cell  = np.nonzero(mask_cell)[0]
         fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].mean()
-        
+
+
+    ## Set up groundwater equation
+    if uw.mpi.rank == 0 and verbose:
+        print("Solving grounwater equation...")
+    gwadvDiff = uw.systems.SteadyStateDarcyFlow(
+                                                velocityField    = velocityField, \
+                                                pressureField    = gwPressureField, \
+                                                fn_diffusivity   = fn_hydraulicDiffusivity, \
+                                                conditions       = [gwPressureBC], \
+                                                fn_bodyforce     = -gMapFn, \
+                                                voronoi_swarm    = swarm, \
+                                                swarmVarVelocity = swarmVelocity)
+    gwsolver = uw.systems.Solver(gwadvDiff)
+    gwsolver.solve()
+    
+    
     # temperature-dependent conductivity
+    coeff = 1.0
     temperatureField.data[:] = np.clip(temperatureField.data, Tmin, Tmax)
+    temperatureField.data[topWall] = Tmin
+    temperatureField.data[bottomWall] = Tmax
     fn_thermalDiffusivity = thermalDiffusivity*(298.0/temperatureField)**a_exponent
+    fn_source = uw.function.math.dot(-1.0*coeff*velocityField, temperatureField.fn_gradient) + heatProductionField
     
     ## Set up heat equation
     if uw.mpi.rank == 0 and verbose:
         print("Solving heat equation...")
     heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField, \
                                           fn_diffusivity   = fn_thermalDiffusivity, \
-                                          fn_heating       = heatProduction, \
+                                          fn_heating       = fn_source, \
                                           conditions       = temperatureBC \
                                           )
     heatsolver = uw.systems.Solver(heateqn)
     heatsolver.solve(nonLinearIterate=True)
 
-    
-#     ## Set up groundwater equation
-#     if uw.mpi.rank == 0 and verbose:
-#         print("Solving grounwater equation...")
-#     gwadvDiff = uw.systems.SteadyStateDarcyFlow(
-#                                                 velocityField    = velocityField, \
-#                                                 pressureField    = gwPressureField, \
-#                                                 fn_diffusivity   = fn_hydraulicDiffusivity, \
-#                                                 conditions       = [gwPressureBC], \
-#                                                 fn_bodyforce     = -gMapFn, \
-#                                                 voronoi_swarm    = swarm, \
-#                                                 swarmVarVelocity = swarmVelocity)
-#     gwsolver = uw.systems.Solver(gwadvDiff)
-#     gwsolver.solve()
     
     # compare to observations
     misfit = np.array(0.0)
@@ -471,7 +483,7 @@ def forward_model(x):
         if uw.mpi.rank == 0:
             sim_temperature = sim_temperature.ravel()
             well_temperature[sim_temperature == 0] = 0.0 # protect against values that are above ground surface
-            print(uw.mpi.rank, name, ((well_temperature - sim_temperature)**2).sum()/len(sim_temperature))
+            # print(uw.mpi.rank, name, ((well_temperature - sim_temperature)**2).sum()/len(sim_temperature))
             misfit += ((well_temperature - sim_temperature)**2).sum()/len(sim_temperature)
     
     # compare priors
@@ -481,16 +493,27 @@ def forward_model(x):
         misfit += ((H - H0)**2/dH**2).sum()
     
     comm.Bcast([misfit, MPI.DOUBLE], root=0)
-    return misfit
     
+    if uw.mpi.rank == 0 and verbose:
+        print("\n rank {} misfit = {}\n".format(uw.mpi.rank, misfit))
+    
+    return misfit
+
 
 # +
 # test forward model
 x = np.hstack([kh0, kt0, H0, [Tmax]])
 
 misfit = forward_model(x)
-print(uw.mpi.rank, misfit)
 # -
+
+well_velocity = velocityField.evaluate_global(np.column_stack([well_E, well_N, well_elevation]))
+if uw.mpi.rank == 0:
+    well_velocity_magnitude = np.hypot(*well_velocity.T)
+    print("max velocity = {:.2e} m/day".format(well_velocity_magnitude.max() * 86400))
+    # one would expect around 3 metres per day
+
+velocityField.data * temperatureField.fn_gradient.evaluate(mesh)
 
 # ## Save to HDF5
 

@@ -78,7 +78,7 @@ mesh = uw.mesh.FeMesh_Cartesian( elementType = (elementType),
 gwPressureField            = mesh.add_variable( nodeDofCount=1 )
 temperatureField           = mesh.add_variable( nodeDofCount=1 )
 velocityField              = mesh.add_variable( nodeDofCount=3 )
-
+heatProductionField        = mesh.add_variable( nodeDofCount=1 )
 
 coords = mesh.data
 
@@ -273,6 +273,7 @@ swarm_topography = interp((swarm.data[:,1],swarm.data[:,0]))
 
 beta = 9.3e-3
 depth = -1*(swarm.data[:,2] - zmax)
+#depth = -1*np.clip(swarm.data[:,2], zmin, 0.0)
 
 fn_hydraulicDiffusivity = swarm.add_variable( dataType="double", count=1 )
 fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
@@ -284,36 +285,13 @@ for cell in range(0, mesh.elementsLocal):
     
     fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].mean()
 
-
-# +
-def fn_kappa_T(k0, T, a=0.33):
-    return k0*(298.0/T)**a
-
-fn_thermalDiffusivity = thermalDiffusivity*(298.0/temperatureField)**a_exponent
-
-# +
-## Set up heat equation
-if uw.mpi.rank == 0 and verbose:
-    print("Solving heat equation...")
-
-heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField,
-                                      fn_diffusivity   = fn_thermalDiffusivity,
-                                      fn_heating       = heatProduction,
-                                      conditions       = temperatureBC
-                                      )
-
-heatsolver = uw.systems.Solver(heateqn)
-heatsolver.solve(nonLinearIterate=True)
-
-thermalDiffusivity.data[:] = fn_thermalDiffusivity.evaluate(swarm)
-
 # +
 ## Set up groundwater equation
 if uw.mpi.rank == 0 and verbose:
     print("Solving grounwater equation...")
 
 Storage = 1.
-rho_water = 1.
+rho_water = 1000.
 
 if deformedmesh:
     g = uw.function.misc.constant((0.,0.,-1.))
@@ -334,6 +312,39 @@ gwadvDiff = uw.systems.SteadyStateDarcyFlow(
 
 gwsolver = uw.systems.Solver(gwadvDiff)
 gwsolver.solve()
+
+
+# +
+def fn_kappa_T(k0, T, a=0.33):
+    return k0*(298.0/T)**a
+
+# coeff is equivalent to rho_water / rho_rock * c_water / c_rock
+# controls the rate of energy transfer from the water to the rock matrix
+coeff = 1.0
+
+fn_thermalDiffusivity = thermalDiffusivity*(298.0/temperatureField)**a_exponent
+
+# unfortunatly we have to project this swarm variable to the mesh!
+HPproj = uw.utils.MeshVariable_Projection(heatProductionField, heatProduction, swarm)
+HPproj.solve()
+
+fn_source = uw.function.math.dot(-1.0*coeff*velocityField, temperatureField.fn_gradient) + heatProductionField
+
+# +
+## Set up heat equation
+if uw.mpi.rank == 0 and verbose:
+    print("Solving heat equation...")
+
+heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField,
+                                      fn_diffusivity   = fn_thermalDiffusivity,
+                                      fn_heating       = fn_source,
+                                      conditions       = temperatureBC
+                                      )
+
+heatsolver = uw.systems.Solver(heateqn)
+heatsolver.solve(nonLinearIterate=True)
+
+thermalDiffusivity.data[:] = fn_thermalDiffusivity.evaluate(swarm)
 # -
 
 # ## Save to HDF5
