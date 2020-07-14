@@ -8,6 +8,7 @@ import os
 import argparse
 from scipy import interpolate
 from scipy.spatial import cKDTree
+from scipy.optimize import minimize
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
 
@@ -410,6 +411,11 @@ def forward_model(x):
     kh, kt, H = np.array_split(x[:-1], 3)
     Tmax = x[-1]
     
+    # initialise "default values"
+    hydraulicDiffusivity.data[:] = kh[-1]
+    thermalDiffusivity.data[:] = kt[-1]
+    a_exponent.data[:] = a[-1]
+
     # populate mesh variables with material properties
     for i, index in enumerate(matIndex):
         mask_material = voxel_model_condensed == index
@@ -423,21 +429,25 @@ def forward_model(x):
     HPproj.solve()
     
     # depth-dependent hydraulic conductivity
-    fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
+    #fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
+    zCoord = -(uw.function.input()[2] - zmax)
+    kh_eff = hydraulicDiffusivity*(1.0 - zCoord/(58.0 + 1.02*zCoord))**3
+    fn_hydraulicDiffusivity.data[:] = kh_eff.evaluate(swarm)
     # average out variation within a cell
     for cell in range(0, mesh.elementsLocal):
         mask_cell = swarm.owningCell.data == cell
         idx_cell  = np.nonzero(mask_cell)[0]
-        fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].mean()
+        fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].max()
 
 
     ## Set up groundwater equation
     if uw.mpi.rank == 0 and verbose:
         print("Solving grounwater equation...")
+        print(kh)
     gwadvDiff = uw.systems.SteadyStateDarcyFlow(
                                                 velocityField    = velocityField, \
                                                 pressureField    = gwPressureField, \
-                                                fn_diffusivity   = fn_hydraulicDiffusivity, \
+                                                fn_diffusivity   = hydraulicDiffusivity, \
                                                 conditions       = [gwPressureBC], \
                                                 fn_bodyforce     = -gMapFn, \
                                                 voronoi_swarm    = swarm, \
@@ -488,8 +498,8 @@ def forward_model(x):
     
     # compare priors
     if uw.mpi.rank == 0:
+        # misfit += ((kh - kh0)**2/dkh**2).sum()
         misfit += ((kt - kt0)**2/dkt**2).sum()
-        misfit += ((kh - kh0)**2/dkh**2).sum()
         misfit += ((H - H0)**2/dH**2).sum()
     
     comm.Bcast([misfit, MPI.DOUBLE], root=0)
@@ -503,8 +513,27 @@ def forward_model(x):
 # +
 # test forward model
 x = np.hstack([kh0, kt0, H0, [Tmax]])
+dx = 0.01*x
 
 misfit = forward_model(x)
+misfit = forward_model(x+dx)
+
+# +
+# define bounded optimisation
+bounds_min = np.hstack([
+    np.full_like(kh0, 1e-15),
+    np.full_like(kt0, 0.05),
+    np.zeros_like(H0),
+    [298.]])
+bounds_max = np.hstack([
+    np.full_like(kh0, 0.001),
+    np.full_like(kt0, 6.0),
+    np.full_like(H0, 10e-6),
+    [500+273.14]])
+
+bounds = list(zip(bounds_min, bounds_max))
+
+res = minimize(forward_model, x, method='TNC', bounds=bounds, options={'gtol': 1e-6, 'disp': True})
 # -
 
 well_velocity = velocityField.evaluate_global(np.column_stack([well_E, well_N, well_elevation]))
@@ -512,8 +541,6 @@ if uw.mpi.rank == 0:
     well_velocity_magnitude = np.hypot(*well_velocity.T)
     print("max velocity = {:.2e} m/day".format(well_velocity_magnitude.max() * 86400))
     # one would expect around 3 metres per day
-
-velocityField.data * temperatureField.fn_gradient.evaluate(mesh)
 
 # ## Save to HDF5
 
@@ -537,10 +564,15 @@ kTproj.solve()
 heatflowField.data[:] = temperatureField.fn_gradient.evaluate(mesh) * -phiField.data.reshape(-1,1)
 
 
+rankField = mesh.add_variable( nodeDofCount=1 )
+rankField.data[:] = uw.mpi.rank
+
+
 for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', velocityField),
                                         (xdmf_info_mesh, 'pressureField', gwPressureField),
                                         (xdmf_info_mesh, 'temperatureField', temperatureField),
                                         (xdmf_info_mesh, 'heatflowField', heatflowField),
+                                        (xdmf_info_mesh, 'rankField', rankField),
                                         (xdmf_info_swarm, 'materialIndexSwarm', materialIndex),
                                         (xdmf_info_swarm, 'hydraulicDiffusivitySwarm', fn_hydraulicDiffusivity),
                                         (xdmf_info_swarm, 'thermalDiffusivitySwarm', thermalDiffusivity),

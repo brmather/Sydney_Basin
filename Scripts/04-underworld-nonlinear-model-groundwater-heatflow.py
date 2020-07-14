@@ -248,6 +248,13 @@ for index in matIndex:
     for lith in layerIndex[index]:
         voxel_model_condensed[voxel_model_condensed == lith] = index
         
+
+# initialise "default values"
+hydraulicDiffusivity.data[:] = kh[-1]
+thermalDiffusivity.data[:] = kt[-1]
+a_exponent.data[:] = a[-1]
+
+
 # populate mesh variables with material properties
 for i, index in enumerate(matIndex):
     mask_material = voxel_model_condensed == index
@@ -375,7 +382,7 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
                                         (xdmf_info_mesh, 'heatflowField', heatflowField),
                                         (xdmf_info_swarm, 'materialIndexSwarm', materialIndex),
                                         (xdmf_info_swarm, 'hydraulicDiffusivitySwarm', fn_hydraulicDiffusivity),
-                                        (xdmf_info_swarm, 'thermalDiffusivitySwarm', thermalDiffusivity),
+                                        (xdmf_info_swarm, 'thermalDiffusivitySwarm', fn_thermalDiffusivity),
                                         (xdmf_info_swarm, 'heatProductionSwarm', heatProduction),
                                         ]:
     
