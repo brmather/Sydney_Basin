@@ -5,6 +5,7 @@
 # +
 import numpy as np
 import os
+import csv
 import argparse
 from time import time
 from scipy import interpolate
@@ -280,6 +281,8 @@ gMapFn = -g*rho_water*Storage
 # -
 
 # ## Load solvers
+#
+# Significant time savings can be had by loading the solvers for groundwater flow and heat flow prior to the forward model.
 
 # +
 # initialise "default values"
@@ -426,6 +429,13 @@ for i, name in enumerate(well_name):
         well_temperature[sim_temperature == 0] = 0.0 # protect against values that are above ground surface
         misfit += ((well_temperature - sim_temperature)**2).sum()/len(sim_temperature)
 
+# ## Initialise output table
+#
+# A place to store misfit and $x$ parameters.
+
+with open(data_dir+'minimiser_results.csv', 'w') as f:
+    pass
+
 
 # +
 def fn_kappa(k0, depth, beta):
@@ -464,22 +474,21 @@ def forward_model(x):
     HPproj = uw.utils.MeshVariable_Projection(heatProductionField, heatProduction, swarm)
     HPproj.solve()
     
-    # depth-dependent hydraulic conductivity
-    #fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
-    zCoord = -(uw.function.input()[2] - zmax)
-    kh_eff = hydraulicDiffusivity*(1.0 - zCoord/(58.0 + 1.02*zCoord))**3
-    fn_hydraulicDiffusivity.data[:] = kh_eff.evaluate(swarm)
-    # average out variation within a cell
-    for cell in range(0, mesh.elementsLocal):
-        mask_cell = swarm.owningCell.data == cell
-        idx_cell  = np.nonzero(mask_cell)[0]
-        fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].max()
+#     # depth-dependent hydraulic conductivity
+#     #fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
+#     zCoord = -(uw.function.input()[2] - zmax)
+#     kh_eff = hydraulicDiffusivity*(1.0 - zCoord/(58.0 + 1.02*zCoord))**3
+#     fn_hydraulicDiffusivity.data[:] = kh_eff.evaluate(swarm)
+#     # average out variation within a cell
+#     for cell in range(0, mesh.elementsLocal):
+#         mask_cell = swarm.owningCell.data == cell
+#         idx_cell  = np.nonzero(mask_cell)[0]
+#         fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].max()
 
 
     ## Set up groundwater equation
     if uw.mpi.rank == 0 and verbose:
         print("Solving grounwater equation...")
-        print(kh)
     gwsolver.solve()
     
     
@@ -522,8 +531,13 @@ def forward_model(x):
     
     comm.Bcast([misfit, MPI.DOUBLE], root=0)
     
-    if uw.mpi.rank == 0 and verbose:
-        print("\n rank {} in {:.2f} sec misfit = {}\n".format(uw.mpi.rank, time()-ti, misfit))
+    if uw.mpi.rank == 0:
+        with open(data_dir+'minimiser_results.csv', 'a') as f:
+            rowwriter = csv.writer(f, delimiter=',')
+            rowwriter.writerow(np.hstack([[misfit], x]))
+
+        if verbose:
+            print("\n rank {} in {:.2f} sec misfit = {}\n".format(uw.mpi.rank, time()-ti, misfit))
     
     return misfit
 
@@ -533,32 +547,33 @@ def forward_model(x):
 x = np.hstack([kh0, kt0, H0, [Tmax]])
 dx = 0.01*x
 
-misfit = forward_model(x)
-misfit = forward_model(x+dx)
+# misfit = forward_model(x)
+# misfit = forward_model(x+dx)
+
+# +
+# define bounded optimisation
+bounds_min = np.hstack([
+    np.full_like(kh0, 1e-15),
+    np.full_like(kt0, 0.05),
+    np.zeros_like(H0),
+    [298.]])
+bounds_max = np.hstack([
+    np.full_like(kh0, 0.001),
+    np.full_like(kt0, 6.0),
+    np.full_like(H0, 10e-6),
+    [600+273.14]])
+
+bounds = list(zip(bounds_min, bounds_max))
+
+res = minimize(forward_model, x, method='TNC', bounds=bounds, options={'gtol': 1e-6, 'disp': True})
 
 # + active=""
-# # define bounded optimisation
-# bounds_min = np.hstack([
-#     np.full_like(kh0, 1e-15),
-#     np.full_like(kt0, 0.05),
-#     np.zeros_like(H0),
-#     [298.]])
-# bounds_max = np.hstack([
-#     np.full_like(kh0, 0.001),
-#     np.full_like(kt0, 6.0),
-#     np.full_like(H0, 10e-6),
-#     [500+273.14]])
-#
-# bounds = list(zip(bounds_min, bounds_max))
-#
-# res = minimize(forward_model, x, method='TNC', bounds=bounds, options={'gtol': 1e-6, 'disp': True})
+# well_velocity = velocityField.evaluate_global(np.column_stack([well_E, well_N, well_elevation]))
+# if uw.mpi.rank == 0:
+#     well_velocity_magnitude = np.hypot(*well_velocity.T)
+#     print("max velocity = {:.2e} m/day".format(well_velocity_magnitude.max() * 86400))
+#     # one would expect around 3 metres per day
 # -
-
-well_velocity = velocityField.evaluate_global(np.column_stack([well_E, well_N, well_elevation]))
-if uw.mpi.rank == 0:
-    well_velocity_magnitude = np.hypot(*well_velocity.T)
-    print("max velocity = {:.2e} m/day".format(well_velocity_magnitude.max() * 86400))
-    # one would expect around 3 metres per day
 
 # ## Save to HDF5
 
