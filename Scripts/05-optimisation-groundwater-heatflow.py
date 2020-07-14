@@ -623,3 +623,17 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
         field_name = save_name[:-5]+'Field'
         xdmf_info_var = phiField.save(data_dir+field_name+'.h5')
         phiField.xdmf(data_dir+field_name+'.xdmf', xdmf_info_var, field_name, xdmf_info_mesh, "TheMesh")
+# -
+
+# ## Save minimiser results
+
+if uw.mpi.rank == 0:
+    np.savez_compressed(data_dir+"optimisation_result.npz",
+                        x       = res.x,
+                        fun     = res.fun,
+                        success = res.success,
+                        status  = res.status,
+                        nfev    = res.nfev,
+                        nit     = res.nit
+                        hessian = res.hess_inv.todense(),
+                        )
