@@ -6,6 +6,7 @@
 import numpy as np
 import os
 import argparse
+from time import time
 from scipy import interpolate
 from scipy.spatial import cKDTree
 from scipy.optimize import minimize
@@ -278,6 +279,39 @@ gwPressureGrad = gwPressureField.fn_gradient
 gMapFn = -g*rho_water*Storage
 # -
 
+# ## Load solvers
+
+# +
+# initialise "default values"
+hydraulicDiffusivity.data[:] = kh0[-1]
+thermalDiffusivity.data[:] = kt0[-1]
+a_exponent.data[:] = a[-1]
+
+coeff = 1.0
+fn_thermalDiffusivity = thermalDiffusivity*(298.0/temperatureField)**a_exponent
+fn_source = uw.function.math.dot(-1.0*coeff*velocityField, temperatureField.fn_gradient) + heatProductionField
+
+# +
+# groundwater solver
+gwadvDiff = uw.systems.SteadyStateDarcyFlow(
+                                            velocityField    = velocityField, \
+                                            pressureField    = gwPressureField, \
+                                            fn_diffusivity   = hydraulicDiffusivity, \
+                                            conditions       = [gwPressureBC], \
+                                            fn_bodyforce     = -gMapFn, \
+                                            voronoi_swarm    = swarm, \
+                                            swarmVarVelocity = swarmVelocity)
+gwsolver = uw.systems.Solver(gwadvDiff)
+
+# heatflow solver
+heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField, \
+                                      fn_diffusivity   = fn_thermalDiffusivity, \
+                                      fn_heating       = fn_source, \
+                                      conditions       = temperatureBC \
+                                      )
+heatsolver = uw.systems.Solver(heateqn)
+# -
+
 # ## Load observations
 #
 # `evaluate_global()` raises an error if the coordinates are outside the domain. The next cells filter the well data.
@@ -407,6 +441,8 @@ def forward_model(x):
     - H    : heat production
     - Tmax : bottom temperature BC
     """
+    ti = time()
+    
     # unpack input vector
     kh, kt, H = np.array_split(x[:-1], 3)
     Tmax = x[-1]
@@ -444,35 +480,17 @@ def forward_model(x):
     if uw.mpi.rank == 0 and verbose:
         print("Solving grounwater equation...")
         print(kh)
-    gwadvDiff = uw.systems.SteadyStateDarcyFlow(
-                                                velocityField    = velocityField, \
-                                                pressureField    = gwPressureField, \
-                                                fn_diffusivity   = hydraulicDiffusivity, \
-                                                conditions       = [gwPressureBC], \
-                                                fn_bodyforce     = -gMapFn, \
-                                                voronoi_swarm    = swarm, \
-                                                swarmVarVelocity = swarmVelocity)
-    gwsolver = uw.systems.Solver(gwadvDiff)
     gwsolver.solve()
     
     
     # temperature-dependent conductivity
-    coeff = 1.0
     temperatureField.data[:] = np.clip(temperatureField.data, Tmin, Tmax)
     temperatureField.data[topWall] = Tmin
     temperatureField.data[bottomWall] = Tmax
-    fn_thermalDiffusivity = thermalDiffusivity*(298.0/temperatureField)**a_exponent
-    fn_source = uw.function.math.dot(-1.0*coeff*velocityField, temperatureField.fn_gradient) + heatProductionField
     
     ## Set up heat equation
     if uw.mpi.rank == 0 and verbose:
         print("Solving heat equation...")
-    heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField, \
-                                          fn_diffusivity   = fn_thermalDiffusivity, \
-                                          fn_heating       = fn_source, \
-                                          conditions       = temperatureBC \
-                                          )
-    heatsolver = uw.systems.Solver(heateqn)
     heatsolver.solve(nonLinearIterate=True)
 
     
@@ -505,7 +523,7 @@ def forward_model(x):
     comm.Bcast([misfit, MPI.DOUBLE], root=0)
     
     if uw.mpi.rank == 0 and verbose:
-        print("\n rank {} misfit = {}\n".format(uw.mpi.rank, misfit))
+        print("\n rank {} in {:.2f} sec misfit = {}\n".format(uw.mpi.rank, time()-ti, misfit))
     
     return misfit
 
@@ -518,22 +536,22 @@ dx = 0.01*x
 misfit = forward_model(x)
 misfit = forward_model(x+dx)
 
-# +
-# define bounded optimisation
-bounds_min = np.hstack([
-    np.full_like(kh0, 1e-15),
-    np.full_like(kt0, 0.05),
-    np.zeros_like(H0),
-    [298.]])
-bounds_max = np.hstack([
-    np.full_like(kh0, 0.001),
-    np.full_like(kt0, 6.0),
-    np.full_like(H0, 10e-6),
-    [500+273.14]])
-
-bounds = list(zip(bounds_min, bounds_max))
-
-res = minimize(forward_model, x, method='TNC', bounds=bounds, options={'gtol': 1e-6, 'disp': True})
+# + active=""
+# # define bounded optimisation
+# bounds_min = np.hstack([
+#     np.full_like(kh0, 1e-15),
+#     np.full_like(kt0, 0.05),
+#     np.zeros_like(H0),
+#     [298.]])
+# bounds_max = np.hstack([
+#     np.full_like(kh0, 0.001),
+#     np.full_like(kt0, 6.0),
+#     np.full_like(H0, 10e-6),
+#     [500+273.14]])
+#
+# bounds = list(zip(bounds_min, bounds_max))
+#
+# res = minimize(forward_model, x, method='TNC', bounds=bounds, options={'gtol': 1e-6, 'disp': True})
 # -
 
 well_velocity = velocityField.evaluate_global(np.column_stack([well_E, well_N, well_elevation]))
