@@ -82,6 +82,7 @@ mesh = uw.mesh.FeMesh_Cartesian( elementType = (elementType),
 
 gwPressureField            = mesh.add_variable( nodeDofCount=1 )
 temperatureField           = mesh.add_variable( nodeDofCount=1 )
+temperatureField0          = mesh.add_variable( nodeDofCount=1 )
 velocityField              = mesh.add_variable( nodeDofCount=3 )
 heatProductionField        = mesh.add_variable( nodeDofCount=1 )
 
@@ -260,7 +261,7 @@ for index in matIndex:
 
 # +
 interp.values = grid_list[0]
-swarm_topography = interp((swarm.data[:,1],swarm.data[:,0]))
+swarm_topography = interp((swarm.data[:,1], swarm.data[:,0]))
 
 beta = 9.3e-3
 depth = -1*(swarm.data[:,2] - zmax)
@@ -321,8 +322,10 @@ heatsolver = uw.systems.Solver(heateqn)
 
 # +
 # load observations
-well_E, well_N = np.loadtxt(data_dir+"well_ledger.csv", delimiter=',', usecols=(3,4), skiprows=1, unpack=True)
-well_name = np.loadtxt(data_dir+"well_ledger.csv", delimiter=',', usecols=(0,), skiprows=1, dtype=str)
+well_E, well_N, well_dTdz = np.loadtxt(data_dir+"well_ledger.csv", delimiter=',', usecols=(3,4,9),
+                                       skiprows=1, unpack=True)
+
+well_dTdz[np.isnan(well_dTdz)] = 0
 
 # filter observations outside domain
 mask_wells = np.zeros_like(well_E, dtype=bool)
@@ -330,104 +333,40 @@ mask_wells += well_E < xmin
 mask_wells += well_E > xmax
 mask_wells += well_N < ymin
 mask_wells += well_N > ymax
+mask_wells += well_dTdz <= 0.0
 mask_wells = np.invert(mask_wells)
 
 well_E = well_E[mask_wells]
 well_N = well_N[mask_wells]
-well_name = well_name[mask_wells]
+well_dTdz = well_dTdz[mask_wells]
 
 # interpolate topography to well locations
 interp.values = grid_list[0]
 well_elevation = np.array(interp(np.c_[well_N, well_E]))
 
-# +
-mask_wells = np.zeros_like(well_E, dtype=bool)
+well_xyz = np.c_[well_E, well_N, well_elevation]
 
-misfit = np.array(0.0)
-for i, name in enumerate(well_name):
-    well_depth, well_temperature = np.loadtxt(data_dir+"well_data/{}.csv".format(name), delimiter=',',
-                                              usecols=(0,2), skiprows=1, unpack=True)
-    
-    well_temperature = np.atleast_1d(well_temperature)
-    well_temperature += 273.14 # convert to K
-    well_xyz = np.empty((well_depth.size,3))
-    well_xyz[:,0] = well_E[i]
-    well_xyz[:,1] = well_N[i]
-    well_xyz[:,2] = well_elevation[i] - well_depth ## subtract topography!
-    
+nwells = well_xyz.shape[0]
+print("number of well observations = {}".format(nwells))
+# -
+
+well_xyz_copy = well_xyz.copy()
+
+for i in range(0, nwells):
     exception = np.array(True)
     while exception:
-        well_xyz = np.empty((well_depth.size,3))
-        well_xyz[:,0] = well_E[i]
-        well_xyz[:,1] = well_N[i]
-        well_xyz[:,2] = well_elevation[i] - well_depth ## subtract topography!
-        
         try:
-            sim_temperature = temperatureField.evaluate_global(well_xyz)
-            exception = np.array(False)
-        except RuntimeError:
-            exception = np.array(True)
+            sim_temperature = temperatureField.evaluate_global(np.atleast_2d(well_xyz[i]))
+            if sim_temperature.ravel() > 0:
+                exception = np.array(False)
+        except:
+            pass
         
         # only the root processor knows if this failed or not
         comm.Bcast([exception, MPI.BOOL], root=0)
         
         if exception:
-            well_elevation[i] -= 10
-
-
-# + active=""
-# mask_wells = np.zeros_like(well_E, dtype=bool)
-#
-# misfit = np.array(0.0)
-# for i, name in enumerate(well_name):
-#     well_depth, well_temperature = np.loadtxt(data_dir+"well_data/{}.csv".format(name), delimiter=',',
-#                                               usecols=(0,2), skiprows=1, unpack=True)
-#     
-#     well_temperature = np.atleast_1d(well_temperature)
-#     well_temperature += 273.14 # convert to K
-#     well_xyz = np.empty((well_depth.size,3))
-#     well_xyz[:,0] = well_E[i]
-#     well_xyz[:,1] = well_N[i]
-#     well_xyz[:,2] = well_elevation[i] - well_depth - 100## subtract topography!
-#
-#     try:
-#         sim_temperature = temperatureField.evaluate_global(well_xyz)
-#         mask_wells[i] = True
-#     except RuntimeError:
-#         sim_temperature = np.array([0.0])
-#         well_temperature = np.array([0.0])
-#         mask_wells[i] = False
-#         print(i, name)
-#         
-#     if uw.mpi.rank == 0:
-#         sim_temperature = sim_temperature.ravel()
-#         well_temperature[sim_temperature == 0] = 0.0 # protect against values that are above ground surface
-#         misfit += ((well_temperature - sim_temperature)**2).sum()/len(sim_temperature)
-#         
-# # mask again
-# well_E = well_E[mask_wells]
-# well_N = well_N[mask_wells]
-# well_name = well_name[mask_wells]
-# -
-
-# compare to observations
-misfit = np.array(0.0)
-for i, name in enumerate(well_name):
-    well_depth, well_temperature = np.loadtxt(data_dir+"well_data/{}.csv".format(name), delimiter=',',
-                                              usecols=(0,2), skiprows=1, unpack=True)
-
-    well_temperature = np.atleast_1d(well_temperature)
-    well_temperature += 273.14 # convert to K
-    well_xyz = np.empty((well_depth.size,3))
-    well_xyz[:,0] = well_E[i]
-    well_xyz[:,1] = well_N[i]
-    well_xyz[:,2] = well_elevation[i] - well_depth ## subtract topography!
-    
-    sim_temperature = temperatureField.evaluate_global(well_xyz)
-    if uw.mpi.rank == 0:
-        sim_temperature = sim_temperature.ravel()
-        well_temperature[sim_temperature == 0] = 0.0 # protect against values that are above ground surface
-        misfit += ((well_temperature - sim_temperature)**2).sum()/len(sim_temperature)
+            well_xyz[i,2] -= 10
 
 
 # +
@@ -506,32 +445,22 @@ def forward_model(x):
         ## Set up heat equation
         if uw.mpi.rank == 0 and verbose:
             print("Solving heat equation...")
-        try:
-            heatsolver.solve(nonLinearIterate=True, nonLinearMaxIterations=10)
-        except:
-            pass
+        for its in range(0, 10):
+            temperatureField0.data[:] = temperatureField.data[:]
+            heatsolver.solve(nonLinearIterate=False)
 
+            Tdiff = np.array(np.abs(temperatureField0.data[:] - temperatureField.data[:]).max())
+            Tdiff_all = np.array(0.0)
+            comm.Allreduce([Tdiff, MPI.DOUBLE], [Tdiff_all, MPI.DOUBLE], op=MPI.MAX)
+            if Tdiff_all < 0.01:
+                break
 
         # compare to observations
         misfit = np.array(0.0)
-        for i, name in enumerate(well_name):
-            well_depth, well_temperature = np.loadtxt(data_dir+"well_data/{}.csv".format(name), delimiter=',',
-                                                      usecols=(0,2), skiprows=1, unpack=True)
-
-            well_temperature = np.atleast_1d(well_temperature)
-            well_temperature += 273.14 # convert to K
-            well_xyz = np.empty((well_depth.size,3))
-            well_xyz[:,0] = well_E[i]
-            well_xyz[:,1] = well_N[i]
-            well_xyz[:,2] = well_elevation[i]-well_depth
-            
-
-            sim_temperature = temperatureField.evaluate_global(well_xyz)
-            if uw.mpi.rank == 0:
-                sim_temperature = sim_temperature.ravel()
-                well_temperature[sim_temperature == 0] = 0.0 # protect against values that are above ground surface
-                # print(uw.mpi.rank, name, ((well_temperature - sim_temperature)**2).sum()/len(sim_temperature))
-                misfit += ((well_temperature - sim_temperature)**2).sum()/len(sim_temperature)
+        sim_dTdz = temperatureField.fn_gradient[2].evaluate_global(well_xyz)
+        if uw.mpi.rank == 0:
+            sim_dTdz = -1.0*sim_dTdz.ravel()
+            misfit += ((well_dTdz - sim_dTdz)**2).sum()
             
 
         # compare priors
@@ -579,14 +508,11 @@ else:
     
 mintree = cKDTree(minimiser_results)
 
-# + active=""
-# (2556, 34) <-- for TNC. 1 day on HPC with 768 cores yields (159, 34), so it would take 14 days to find inv sol.
-# BUT TNC fails to converge because the line search is crap.
-
 # +
 # test forward model
-misfit = forward_model(x)
-# misfit = forward_model(x+dx)
+# fm0 = forward_model(x)
+# fm1 = forward_model(x+dx)
+# print("finite difference = {}".format(fm1-fm0))
 
 
 # define bounded optimisation
@@ -596,7 +522,7 @@ bounds_lower = np.hstack([
     np.zeros_like(H0),
     [298.]])
 bounds_upper = np.hstack([
-    np.full_like(kh0, -4),
+    np.full_like(kh0, -5),
     np.full_like(kt0, 6.0),
     np.full_like(H0, 10),
     [600+273.14]])
@@ -609,8 +535,29 @@ finite_diff_step = np.hstack([np.full_like(kh0, 0.1), np.full_like(kt0, 0.01), n
 def obj_func(x):
     return forward_model(x)
 def obj_grad(x):
-    return optimize.approx_fprime(x, forward_model, finite_diff_step)
+    return optimize.approx_fprime(x, forward_model, finite_diff_step)  
 
+
+
+# + active=""
+# (2556, 34) <-- for TNC. 1 day on HPC with 768 cores yields (159, 34), so it would take 14 days to find inv sol.
+# BUT TNC fails to converge because the line search is crap.
+
+# +
+res = optimize.differential_evolution(forward_model, bounds=bounds, popsize=2, seed=42, disp=True)
+print(res)
+
+if uw.mpi.rank == 0:
+    np.savez_compressed(data_dir+"optimisation_result.npz", **res)
+
+# + active=""
+# res = optimize.shgo(forward_model, bounds=bounds,)
+# print(res)
+# -
+
+# **steepest descent**
+#
+# ```python
 # for i in range(0, 100):
 #     grad_f = optimize.approx_fprime(x, forward_model, finite_diff_step)
 #     mu = 0.01
@@ -618,11 +565,66 @@ def obj_grad(x):
 #     #mu, fc, gc, new_fval, old_fval, new_slope = optimize.line_search(obj_func, obj_grad, x, search_gradient,grad_f)
 #     x = x - mu*grad_f
 #     x = np.clip(x, bounds_lower, bounds_upper)
-    
+# ```
 
-options={'gtol': 1e-6, 'disp': True, 'finite_diff_rel_step': finite_diff_step}
-res = optimize.minimize(forward_model, x, method='TNC', bounds=bounds, options=options)
-print(res)
+# **minimize**
+#
+# ```python
+# np.random.seed(42)
+# options={'gtol': 1e-6, 'disp': True, 'finite_diff_rel_step': finite_diff_step}
+# res = optimize.minimize(forward_model, x, method='TNC', bounds=bounds, options=options)
+# print(res)
+#
+# if uw.mpi.rank == 0:
+#     np.savez_compressed(data_dir+"optimisation_result.npz",
+#                         x       = res.x,
+#                         fun     = res.fun,
+#                         success = res.success,
+#                         status  = res.status,
+#                         nfev    = res.nfev,
+#                         nit     = res.nit,
+#                         #hessian = res.hess_inv.todense()
+#                         )
+# ```
+
+# **EMCEE (MCMC sampler)**
+#
+# ```python
+# import emcee
+# np.random.seed(42)
+#
+# nwalker=x.size*2
+#
+# x0 = np.empty((nwalker, x.size))
+# x0[0] = x
+# for i in range(1, nwalker):
+#     x0[i] = np.random.uniform(bounds_lower, bounds_upper)
+#
+# sampler = emcee.EnsembleSampler(nwalker, x.size, forward_model,)
+# state = sampler.run_mcmc(x0, 10, skip_initial_state_check=True) # burn in
+#
+# sampler.reset()
+# sampler.run_mcmc(state, 100)
+#
+# posterior = sampler.get_chain(flat=True)
+# np.savetxt("mcmc_posterior.txt", posterior)
+# print("Mean acceptance fraction: {0:.3f}".format(np.mean(sampler.acceptance_fraction)))
+# ```
+
+# **PINNUTS (Hamiltonian Monte Carlo)**
+#
+# ```python
+# from pinnuts import pinnuts
+#
+# def obj_fun_grad(x):
+#     logp = obj_func(x)
+#     grad = obj_grad(x)
+#     return logp, grad
+#
+# np.random.seed(1)
+# samples, lnprob, epsilon = pinnuts(obj_fun_grad, 50, 10, x, finite_diff_step)
+# print("samples\n", samples, "lnprob\n", lnprob, "epsilon\n", epsilon)
+# ```
 
 # + active=""
 # well_velocity = velocityField.evaluate_global(np.column_stack([well_E, well_N, well_elevation]))
@@ -684,13 +686,4 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
 
 # ## Save minimiser results
 
-if uw.mpi.rank == 0:
-    np.savez_compressed(data_dir+"optimisation_result.npz",
-                        x       = res.x,
-                        fun     = res.fun,
-                        success = res.success,
-                        status  = res.status,
-                        nfev    = res.nfev,
-                        nit     = res.nit,
-                        #hessian = res.hess_inv.todense()
-                        )
+
