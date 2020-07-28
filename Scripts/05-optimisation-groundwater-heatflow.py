@@ -666,7 +666,7 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
                                         (xdmf_info_mesh, 'heatflowField', heatflowField),
                                         (xdmf_info_mesh, 'rankField', rankField),
                                         (xdmf_info_swarm, 'materialIndexSwarm', materialIndex),
-                                        (xdmf_info_swarm, 'hydraulicDiffusivitySwarm', fn_hydraulicDiffusivity),
+                                        (xdmf_info_swarm, 'hydraulicDiffusivitySwarm', hydraulicDiffusivity),
                                         (xdmf_info_swarm, 'thermalDiffusivitySwarm', thermalDiffusivity),
                                         (xdmf_info_swarm, 'heatProductionSwarm', heatProduction),
                                         ]:
