@@ -465,7 +465,7 @@ def forward_model(x):
 
         # compare priors
         if uw.mpi.rank == 0:
-            # misfit += ((kh - kh0)**2/dkh**2).sum()
+            misfit += ((np.log10(kh) - np.log10(kh0))**2).sum()
             misfit += ((kt - kt0)**2/dkt**2).sum()
             misfit += ((H - H0)**2/dH**2).sum()
 
@@ -517,13 +517,13 @@ mintree = cKDTree(minimiser_results)
 
 # define bounded optimisation
 bounds_lower = np.hstack([
-    np.full_like(kh0, -15),
-    np.full_like(kt0, 0.05),
+    np.full_like(kh0, -20),
+    np.full_like(kt0, 0.0),
     np.zeros_like(H0),
     [298.]])
 bounds_upper = np.hstack([
-    np.full_like(kh0, -5),
-    np.full_like(kt0, 6.0),
+    np.full_like(kh0, -3),
+    np.full_like(kt0, 10.0),
     np.full_like(H0, 10),
     [600+273.14]])
 
