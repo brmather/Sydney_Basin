@@ -308,7 +308,7 @@ fn_source = uw.function.math.dot(-1.0*coeff*velocityField, temperatureField.fn_g
 gwadvDiff = uw.systems.SteadyStateDarcyFlow(
                                             velocityField    = velocityField, \
                                             pressureField    = gwPressureField, \
-                                            fn_diffusivity   = fn_hydraulicDiffusivity, \
+                                            fn_diffusivity   = hydraulicDiffusivity, \
                                             conditions       = [gwPressureBC], \
                                             fn_bodyforce     = -gMapFn, \
                                             voronoi_swarm    = swarm, \
@@ -318,7 +318,7 @@ gwsolver = uw.systems.Solver(gwadvDiff)
 # heatflow solver
 heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField, \
                                       fn_diffusivity   = fn_thermalDiffusivity, \
-                                      fn_heating       = fn_source, \
+                                      fn_heating       = heatProduction, \
                                       conditions       = temperatureBC \
                                       )
 heatsolver = uw.systems.Solver(heateqn)
@@ -418,16 +418,16 @@ def forward_model(x):
     HPproj = uw.utils.MeshVariable_Projection(heatProductionField, heatProduction, swarm)
     HPproj.solve()
 
-    # depth-dependent hydraulic conductivity
-    #fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
-    zCoord = -(uw.function.input()[2] - zmax)
-    kh_eff = hydraulicDiffusivity*(1.0 - zCoord/(58.0 + 1.02*zCoord))**3
-    fn_hydraulicDiffusivity.data[:] = kh_eff.evaluate(swarm)
-    # average out variation within a cell
-    for cell in range(0, mesh.elementsLocal):
-        mask_cell = swarm.owningCell.data == cell
-        idx_cell  = np.nonzero(mask_cell)[0]
-        fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].max()
+#    # depth-dependent hydraulic conductivity
+#    #fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
+#    zCoord = -(uw.function.input()[2] - zmax)
+#    kh_eff = hydraulicDiffusivity*(1.0 - zCoord/(58.0 + 1.02*zCoord))**3
+#    fn_hydraulicDiffusivity.data[:] = kh_eff.evaluate(swarm)
+#    # average out variation within a cell
+#    for cell in range(0, mesh.elementsLocal):
+#        mask_cell = swarm.owningCell.data == cell
+#        idx_cell  = np.nonzero(mask_cell)[0]
+#        fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].max()
 
 
     ## Set up groundwater equation
@@ -520,7 +520,7 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
                                         (xdmf_info_mesh, 'heatflowField', heatflowField),
                                         (xdmf_info_mesh, 'rankField', rankField),
                                         (xdmf_info_swarm, 'materialIndexSwarm', materialIndex),
-                                        (xdmf_info_swarm, 'hydraulicDiffusivitySwarm', fn_hydraulicDiffusivity),
+                                        (xdmf_info_swarm, 'hydraulicDiffusivitySwarm', hydraulicDiffusivity),
                                         (xdmf_info_swarm, 'thermalDiffusivitySwarm', thermalDiffusivity),
                                         (xdmf_info_swarm, 'heatProductionSwarm', heatProduction),
                                         ]:
