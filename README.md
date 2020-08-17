@@ -29,6 +29,20 @@ The following geological surfaces are stored in the `Data` directory:
 16. Complete volcanics offshore
 17. Complete basement
 
+
+## Bayesian probability
+
+Model averaging possible for the vector flows below if you wanted to? Would require:
+
+- Saving vector flows for each posterior combination of parameters,
+- Adding them together (could do cumulatively, multiplied my likelihood at each sample to save memory)
+- Dividing by the right normalisation constant at the end.
+- To save compute this could be done only every x = N_samples/n_eff samples, where n_eff is the effective sample size, i.e. the number of statistically independent samples.
+- I would still then look at uncertainties the same way you would for the MAP estimate.
+
+But maybe just keep MAP estimate for _Scientific Reports_!
+
+
 ## Acknowledgements
 
 The Sydney Basin model was provided by Dr. Craig O'Neill of Macquarie University. The geological model was constructed by Dr. Cara Danis.
