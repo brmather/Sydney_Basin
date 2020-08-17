@@ -264,6 +264,8 @@ for index in matIndex:
     for lith in layerIndex[index]:
         voxel_model_condensed[voxel_model_condensed == lith] = index
 
+materialIndex.data[:] = voxel_model_condensed.reshape(-1,1)
+
 # +
 interp.values = grid_list[0]
 swarm_topography = interp((swarm.data[:,1], swarm.data[:,0]))

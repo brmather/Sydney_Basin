@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
-# # 5 - Optimisation: groundwater + heat flow
+# # 6 - Run a single forward model
+#
+# At high resolution
 
 # +
 import numpy as np
@@ -22,6 +24,7 @@ if uw.mpi.size > 1:
     parser.add_argument('echo', type=str, metavar='PATH', help='I/O location')
     parser.add_argument('-r', '--res', type=int, metavar='N', nargs='+', default=[20,20,50], help='Resolution in X,Y,Z directions')
     parser.add_argument('-v', '--verbose', action='store_true', required=False, default=False, help="Verbose output")
+    parser.add_argument('-i', '--input', type=str, required=True, help="Minimiser results file")
     parser.add_argument('--Tmin', type=float, required=False, default=298.0, help="Minimum temperature")
     parser.add_argument('--Tmax', type=float, required=False, default=500.0, help="Maximum temperature")
     args = parser.parse_args()
@@ -32,6 +35,7 @@ if uw.mpi.size > 1:
     Tmin = args.Tmin
     Tmax = args.Tmax
     Nx, Ny, Nz = args.res # global size
+    minres = args.input
 
 else:
     data_dir = "../Data/"
@@ -39,6 +43,7 @@ else:
     Tmin = 298.0
     Tmax = 500.0
     Nx, Ny, Nz = 20,20,50 # global size
+    minres = data_dir+"optimisation_result.npz"
 # -
 
 # ## Import geological surfaces
@@ -259,6 +264,8 @@ for index in matIndex:
     for lith in layerIndex[index]:
         voxel_model_condensed[voxel_model_condensed == lith] = index
 
+materialIndex.data[:] = voxel_model_condensed.reshape(-1,1)
+
 # +
 interp.values = grid_list[0]
 swarm_topography = interp((swarm.data[:,1], swarm.data[:,0]))
@@ -288,6 +295,7 @@ gMapFn = -g*rho_water*Storage
 # +
 # initialise "default values"
 hydraulicDiffusivity.data[:] = kh0[-1]
+fn_hydraulicDiffusivity.data[:] = kh0[-1]
 thermalDiffusivity.data[:] = kt0[-1]
 a_exponent.data[:] = a[-1]
 
@@ -310,7 +318,7 @@ gwsolver = uw.systems.Solver(gwadvDiff)
 # heatflow solver
 heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField, \
                                       fn_diffusivity   = fn_thermalDiffusivity, \
-                                      fn_heating       = fn_source, \
+                                      fn_heating       = heatProduction, \
                                       conditions       = temperatureBC \
                                       )
 heatsolver = uw.systems.Solver(heateqn)
@@ -385,253 +393,99 @@ def forward_model(x):
     """
     ti = time()
     
-    # check we haven't already got a solution
-    dist, idx = mintree.query(x)
+    # unpack input vector
+    kh, kt, H = np.array_split(x[:-1], 3)
+    Tmax = x[-1]
 
-    if dist == 0.0:
-        misfit = minimiser_misfits[idx]
-        if verbose:
-            print("using surrogate model, misfit = {}".format(misfit))
-        return misfit
-    else:
-        # unpack input vector
-        kh, kt, H = np.array_split(x[:-1], 3)
-        Tmax = x[-1]
-        
-        # scale variables
-        kh = 10.0**kh # log10 scale
-        H  = H*1e-6 # convert to micro
+    # scale variables
+    kh = 10.0**kh # log10 scale
+    H  = H*1e-6 # convert to micro
 
-        # initialise "default values"
-        hydraulicDiffusivity.data[:] = kh[-1]
-        thermalDiffusivity.data[:] = kt[-1]
-        a_exponent.data[:] = a[-1]
+    # initialise "default values"
+    hydraulicDiffusivity.data[:] = kh[-1]
+    thermalDiffusivity.data[:] = kt[-1]
+    a_exponent.data[:] = a[-1]
 
-        # populate mesh variables with material properties
-        for i, index in enumerate(matIndex):
-            mask_material = voxel_model_condensed == index
-            hydraulicDiffusivity.data[mask_material] = kh[i]
-            thermalDiffusivity.data[mask_material]   = kt[i]
-            heatProduction.data[mask_material]       = H[i]
-            a_exponent.data[mask_material]           = a[i]
+    # populate mesh variables with material properties
+    for i, index in enumerate(matIndex):
+        mask_material = voxel_model_condensed == index
+        hydraulicDiffusivity.data[mask_material] = kh[i]
+        thermalDiffusivity.data[mask_material]   = kt[i]
+        heatProduction.data[mask_material]       = H[i]
+        a_exponent.data[mask_material]           = a[i]
 
-        # project HP to mesh
-        HPproj = uw.utils.MeshVariable_Projection(heatProductionField, heatProduction, swarm)
-        HPproj.solve()
+    # project HP to mesh
+    HPproj = uw.utils.MeshVariable_Projection(heatProductionField, heatProduction, swarm)
+    HPproj.solve()
 
-    #     # depth-dependent hydraulic conductivity
-    #     #fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
-    #     zCoord = -(uw.function.input()[2] - zmax)
-    #     kh_eff = hydraulicDiffusivity*(1.0 - zCoord/(58.0 + 1.02*zCoord))**3
-    #     fn_hydraulicDiffusivity.data[:] = kh_eff.evaluate(swarm)
-    #     # average out variation within a cell
-    #     for cell in range(0, mesh.elementsLocal):
-    #         mask_cell = swarm.owningCell.data == cell
-    #         idx_cell  = np.nonzero(mask_cell)[0]
-    #         fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].max()
+#    # depth-dependent hydraulic conductivity
+#    #fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
+#    zCoord = -(uw.function.input()[2] - zmax)
+#    kh_eff = hydraulicDiffusivity*(1.0 - zCoord/(58.0 + 1.02*zCoord))**3
+#    fn_hydraulicDiffusivity.data[:] = kh_eff.evaluate(swarm)
+#    # average out variation within a cell
+#    for cell in range(0, mesh.elementsLocal):
+#        mask_cell = swarm.owningCell.data == cell
+#        idx_cell  = np.nonzero(mask_cell)[0]
+#        fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].max()
 
 
-        ## Set up groundwater equation
-        if uw.mpi.rank == 0 and verbose:
-            print("Solving grounwater equation...")
-        gwsolver.solve()
+    ## Set up groundwater equation
+    if uw.mpi.rank == 0 and verbose:
+        print("Solving grounwater equation...")
+    gwsolver.solve()
 
 
-        # temperature-dependent conductivity
-        temperatureField.data[:] = np.clip(temperatureField.data, Tmin, Tmax)
-        temperatureField.data[topWall] = Tmin
-        temperatureField.data[bottomWall] = Tmax
+    # temperature-dependent conductivity
+    temperatureField.data[:] = np.clip(temperatureField.data, Tmin, Tmax)
+    temperatureField.data[topWall] = Tmin
+    temperatureField.data[bottomWall] = Tmax
 
-        ## Set up heat equation
-        if uw.mpi.rank == 0 and verbose:
-            print("Solving heat equation...")
-        for its in range(0, 10):
-            temperatureField0.data[:] = temperatureField.data[:]
-            heatsolver.solve(nonLinearIterate=False)
+    ## Set up heat equation
+    if uw.mpi.rank == 0 and verbose:
+        print("Solving heat equation...")
+    for its in range(0, 10):
+        temperatureField0.data[:] = temperatureField.data[:]
+        heatsolver.solve(nonLinearIterate=False)
 
-            Tdiff = np.array(np.abs(temperatureField0.data[:] - temperatureField.data[:]).max())
-            Tdiff_all = np.array(0.0)
-            comm.Allreduce([Tdiff, MPI.DOUBLE], [Tdiff_all, MPI.DOUBLE], op=MPI.MAX)
-            if Tdiff_all < 0.01:
-                break
+        Tdiff = np.array(np.abs(temperatureField0.data[:] - temperatureField.data[:]).max())
+        Tdiff_all = np.array(0.0)
+        comm.Allreduce([Tdiff, MPI.DOUBLE], [Tdiff_all, MPI.DOUBLE], op=MPI.MAX)
+        if Tdiff_all < 0.01:
+            break
 
-        # compare to observations
-        misfit = np.array(0.0)
-        sim_dTdz = temperatureField.fn_gradient[2].evaluate_global(well_xyz)
-        if uw.mpi.rank == 0:
-            sim_dTdz = -1.0*sim_dTdz.ravel()
-            misfit += ((well_dTdz - sim_dTdz)**2).sum()
-            
-
-        # compare priors
-        if uw.mpi.rank == 0:
-            misfit += ((np.log10(kh) - np.log10(kh0))**2).sum()
-            misfit += ((kt - kt0)**2/dkt**2).sum()
-            misfit += ((H - H0)**2/dH**2).sum()
-
-        comm.Bcast([misfit, MPI.DOUBLE], root=0)
-
-        if uw.mpi.rank == 0:
-            with open(data_dir+'minimiser_results.csv', 'a') as f:
-                rowwriter = csv.writer(f, delimiter=',')
-                rowwriter.writerow(np.hstack([[misfit], x]))
-
-            if verbose:
-                print("\n rank {} in {:.2f} sec misfit = {}\n".format(uw.mpi.rank, time()-ti, misfit))
-    
-        return misfit
-# -
-
-
-x = np.hstack([np.log10(kh0), kt0, H0*1e6, [Tmax]])
-dx = 0.01*x
-
-# ## Initialise output table
-#
-# A place to store misfit and $x$ parameters.
-
-# +
-import os
-if "minimiser_results.csv" in os.listdir(data_dir):
-    # load existing minimiser results table
-    minimiser_results_data = np.loadtxt(data_dir+"minimiser_results.csv", delimiter=',', )
-    if not len(minimiser_results_data):
-        minimiser_results_data = np.zeros((1,x.size+1))
-    minimiser_results = minimiser_results_data[:,1:]
-    minimiser_misfits = minimiser_results_data[:,0]
-else:
-    minimiser_results = np.zeros((1,x.size))
-    minimiser_misfits = np.array([0.0])
+    # compare to observations
+    misfit = np.array(0.0)
+    sim_dTdz = temperatureField.fn_gradient[2].evaluate_global(well_xyz)
     if uw.mpi.rank == 0:
-        with open(data_dir+'minimiser_results.csv', 'w') as f:
-            pass
-    
-mintree = cKDTree(minimiser_results)
-
-# +
-# test forward model
-# fm0 = forward_model(x)
-# fm1 = forward_model(x+dx)
-# print("finite difference = {}".format(fm1-fm0))
+        sim_dTdz = -1.0*sim_dTdz.ravel()
+        misfit += ((well_dTdz - sim_dTdz)**2).sum()
 
 
-# define bounded optimisation
-bounds_lower = np.hstack([
-    np.full_like(kh0, -20),
-    np.full_like(kt0, 0.0),
-    np.zeros_like(H0),
-    [298.]])
-bounds_upper = np.hstack([
-    np.full_like(kh0, -3),
-    np.full_like(kt0, 10.0),
-    np.full_like(H0, 10),
-    [600+273.14]])
+    # compare priors
+    if uw.mpi.rank == 0:
+        # misfit += ((kh - kh0)**2/dkh**2).sum()
+        misfit += ((kt - kt0)**2/dkt**2).sum()
+        misfit += ((H - H0)**2/dH**2).sum()
 
-bounds = list(zip(bounds_lower, bounds_upper))
+    comm.Bcast([misfit, MPI.DOUBLE], root=0)
 
+    if uw.mpi.rank == 0 and verbose:
+        print("\n rank {} in {:.2f} sec misfit = {}\n".format(uw.mpi.rank, time()-ti, misfit))
 
-finite_diff_step = np.hstack([np.full_like(kh0, 0.1), np.full_like(kt0, 0.01), np.full_like(H0, 0.01), [1.0]])
-
-def obj_func(x):
-    return forward_model(x)
-def obj_grad(x):
-    return optimize.approx_fprime(x, forward_model, finite_diff_step)  
-
-
-
-# + active=""
-# (2556, 34) <-- for TNC. 1 day on HPC with 768 cores yields (159, 34), so it would take 14 days to find inv sol.
-# BUT TNC fails to converge because the line search is crap.
-
-# +
-res = optimize.differential_evolution(forward_model, bounds=bounds, popsize=2, seed=42, disp=True)
-print(res)
-
-if uw.mpi.rank == 0:
-    np.savez_compressed(data_dir+"optimisation_result.npz", **res)
-
-# + active=""
-# res = optimize.shgo(forward_model, bounds=bounds,)
-# print(res)
+    return misfit
 # -
 
-# **steepest descent**
-#
-# ```python
-# for i in range(0, 100):
-#     grad_f = optimize.approx_fprime(x, forward_model, finite_diff_step)
-#     mu = 0.01
-#     #search_gradient = np.full_like(x, -0.1)
-#     #mu, fc, gc, new_fval, old_fval, new_slope = optimize.line_search(obj_func, obj_grad, x, search_gradient,grad_f)
-#     x = x - mu*grad_f
-#     x = np.clip(x, bounds_lower, bounds_upper)
-# ```
 
-# **minimize**
+# ## Import optimisation result
 #
-# ```python
-# np.random.seed(42)
-# options={'gtol': 1e-6, 'disp': True, 'finite_diff_rel_step': finite_diff_step}
-# res = optimize.minimize(forward_model, x, method='TNC', bounds=bounds, options=options)
-# print(res)
-#
-# if uw.mpi.rank == 0:
-#     np.savez_compressed(data_dir+"optimisation_result.npz",
-#                         x       = res.x,
-#                         fun     = res.fun,
-#                         success = res.success,
-#                         status  = res.status,
-#                         nfev    = res.nfev,
-#                         nit     = res.nit,
-#                         #hessian = res.hess_inv.todense()
-#                         )
-# ```
+# ... and run a single inversion based on that result
 
-# **EMCEE (MCMC sampler)**
-#
-# ```python
-# import emcee
-# np.random.seed(42)
-#
-# nwalker=x.size*2
-#
-# x0 = np.empty((nwalker, x.size))
-# x0[0] = x
-# for i in range(1, nwalker):
-#     x0[i] = np.random.uniform(bounds_lower, bounds_upper)
-#
-# sampler = emcee.EnsembleSampler(nwalker, x.size, forward_model,)
-# state = sampler.run_mcmc(x0, 10, skip_initial_state_check=True) # burn in
-#
-# sampler.reset()
-# sampler.run_mcmc(state, 100)
-#
-# posterior = sampler.get_chain(flat=True)
-# np.savetxt("mcmc_posterior.txt", posterior)
-# print("Mean acceptance fraction: {0:.3f}".format(np.mean(sampler.acceptance_fraction)))
-# ```
+# +
+with np.load(minres, 'r') as npz:
+    x = npz['x']
 
-# **PINNUTS (Hamiltonian Monte Carlo)**
-#
-# ```python
-# from pinnuts import pinnuts
-#
-# def obj_fun_grad(x):
-#     logp = obj_func(x)
-#     grad = obj_grad(x)
-#     return logp, grad
-#
-# np.random.seed(1)
-# samples, lnprob, epsilon = pinnuts(obj_fun_grad, 50, 10, x, finite_diff_step)
-# print("samples\n", samples, "lnprob\n", lnprob, "epsilon\n", epsilon)
-# ```
-
-# + active=""
-# well_velocity = velocityField.evaluate_global(np.column_stack([well_E, well_N, well_elevation]))
-# if uw.mpi.rank == 0:
-#     well_velocity_magnitude = np.hypot(*well_velocity.T)
-#     print("max velocity = {:.2e} m/day".format(well_velocity_magnitude.max() * 86400))
-#     # one would expect around 3 metres per day
+fm0 = forward_model(x)
 # -
 
 # ## Save to HDF5
@@ -682,8 +536,3 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
         field_name = save_name[:-5]+'Field'
         xdmf_info_var = phiField.save(data_dir+field_name+'.h5')
         phiField.xdmf(data_dir+field_name+'.xdmf', xdmf_info_var, field_name, xdmf_info_mesh, "TheMesh")
-# -
-
-# ## Save minimiser results
-
-
