@@ -1,12 +1,12 @@
 material index,voxel layer,name,density,density error,thermal conductivity,thermal conductivity error,heat production,heat production error,hydraulic conductivity,hydraulic conductivity error,a (T)
-0,-1 0,Air,2650,,3,3,0,1.00E-06,1E-06,1.00E-07,0
-1,1 2,Maules Creek Coal,1900,,0.3,0.05,0,1E-07,1E-10,2.5E-12,0
-3,3 4,Jurassic coal,2180,,0.3,0.05,0,1E-07,1E-10,2.5E-12,0
+0,-1 0,Air,2650,,3,3,0,1E-06,1E-06,1E-07,0
+1,1 2,Maules Creek Coal,1900,,0.3,0.05,0,1E-07,1E-07,2.5E-12,0
+3,3 4,Jurassic coal,2180,,0.3,0.05,0,1E-07,1E-07,2.5E-12,0
 2,5,Jurassic sediments,2310,140,2,0.5,1.25E-06,5E-07,1E-06,2.5E-08,0.33
-4,6 7,Greta coal,1900,,0.3,0.05,0,1E-07,1E-10,2.5E-12,0
-5,8,Permian Coal Measures,2180,360,0.3,0.05,0,1E-07,1E-10,2.5E-12,0
+4,6 7,Greta coal,1900,,0.3,0.05,0,1E-07,1E-07,2.5E-12,0
+5,8,Permian Coal Measures,2180,360,0.3,0.05,0,1E-07,1E-07,2.5E-12,0
 7,9 10,Reid Dome Beds,2540,110,2,0.5,1.25E-06,5E-07,1E-06,2.5E-08,0.25
 6,11,Permian sediments,2370,140,2,0.5,1.25E-06,5E-07,1E-06,2.5E-08,0.33
-8,12 13,Denison Volcanics,2950,60,3,0.75,5E-07,2E-07,1E-09,2.5E-11,0.25
-9,14 15,Complete Volcanics,2950,60,3,0.75,5E-07,2E-07,1E-09,2.5E-11,0.25
-10,16 17,Basement,2650,50,3,0.75,2E-06,5E-07,1E-11,2.5E-13,0.25
+8,12 13,Denison Volcanics,2950,60,2.8,0.75,5E-07,2E-07,1.00E-08,2.5E-11,0.25
+9,14 15,Complete Volcanics,2950,60,2.8,0.75,5E-07,2E-07,1.00E-08,2.5E-11,0.25
+10,16 17,Basement,2650,50,3,0.75,2E-06,5E-07,1E-10,2.5E-13,0.25
