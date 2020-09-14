@@ -153,6 +153,11 @@ initial_temperature = np.clip(initial_temperature, Tmin, Tmax)
 gwPressureField.data[:]  = initial_pressure.reshape(-1,1)
 temperatureField.data[:] = initial_temperature.reshape(-1,1)
 
+sealevel = 0.0
+seafloor = topWall[mesh.data[topWall,2] < sealevel]
+
+gwPressureField.data[topWall] = 0.
+gwPressureField.data[seafloor] = -((mesh.data[seafloor,2]-sealevel)*1.0).reshape(-1,1)
 temperatureField.data[topWall] = Tmin
 temperatureField.data[bottomWall] = Tmax
 # -
@@ -167,12 +172,14 @@ swarm.populate_using_layout( layout=swarmLayout )
 
 # +
 materialIndex  = swarm.add_variable( dataType="int",    count=1 )
+cellCentroid   = swarm.add_variable( dataType="double", count=3 )
 swarmVelocity  = swarm.add_variable( dataType="double", count=3 )
 
-hydraulicDiffusivity = swarm.add_variable( dataType="double", count=1 )
-thermalDiffusivity   = swarm.add_variable( dataType="double", count=1 )
-heatProduction       = swarm.add_variable( dataType="double", count=1 )
-a_exponent           = swarm.add_variable( dataType="double", count=1 )
+hydraulicDiffusivity    = swarm.add_variable( dataType="double", count=1 )
+fn_hydraulicDiffusivity = swarm.add_variable( dataType="double", count=1 )
+thermalDiffusivity      = swarm.add_variable( dataType="double", count=1 )
+heatProduction          = swarm.add_variable( dataType="double", count=1 )
+a_exponent              = swarm.add_variable( dataType="double", count=1 )
 # -
 
 
@@ -191,6 +198,7 @@ for cell in range(0, mesh.elementsLocal):
             break
             
     materialIndex.data[mask_cell] = lith
+    cellCentroid.data[idx_cell] = cell_centroid
 
 
 # ### Assign material properties
@@ -276,21 +284,14 @@ def fn_kappa(k0, depth, beta):
     return k0*(1.0 - depth/(58.0+1.02*depth))**3
 
 interp.values = grid_list[0]
-swarm_topography = interp((swarm.data[:,1],swarm.data[:,0]))
+swarm_topography = interp((cellCentroid.data[:,1],cellCentroid.data[:,0]))
 
 beta = 9.3e-3
-depth = -1*(swarm.data[:,2] - zmax)
-#depth = -1*np.clip(swarm.data[:,2], zmin, 0.0)
+depth = -1.0*(cellCentroid.data[:,2] - swarm_topography)
+depth = np.clip(depth, 0.0, zmax-zmin)
 
-fn_hydraulicDiffusivity = swarm.add_variable( dataType="double", count=1 )
+# set depth-dependent hydraulic diffusivity
 fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
-
-# average out variation within a cell
-for cell in range(0, mesh.elementsLocal):
-    mask_cell = swarm.owningCell.data == cell
-    idx_cell  = np.nonzero(mask_cell)[0]
-    
-    fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].mean()
 
 # +
 ## Set up groundwater equation
@@ -370,6 +371,7 @@ heatflowField   = mesh.add_variable( nodeDofCount=3 )
 
 
 # calculate heat flux
+thermalDiffusivity.data[:] = fn_thermalDiffusivity.evaluate(swarm)
 kTproj = uw.utils.MeshVariable_Projection(phiField, thermalDiffusivity, swarm)
 kTproj.solve()
 
@@ -382,7 +384,7 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
                                         (xdmf_info_mesh, 'heatflowField', heatflowField),
                                         (xdmf_info_swarm, 'materialIndexSwarm', materialIndex),
                                         (xdmf_info_swarm, 'hydraulicDiffusivitySwarm', fn_hydraulicDiffusivity),
-                                        (xdmf_info_swarm, 'thermalDiffusivitySwarm', fn_thermalDiffusivity),
+                                        (xdmf_info_swarm, 'thermalDiffusivitySwarm', thermalDiffusivity),
                                         (xdmf_info_swarm, 'heatProductionSwarm', heatProduction),
                                         ]:
     

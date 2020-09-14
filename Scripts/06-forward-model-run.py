@@ -165,6 +165,11 @@ initial_temperature = np.clip(initial_temperature, Tmin, Tmax)
 gwPressureField.data[:]  = initial_pressure.reshape(-1,1)
 temperatureField.data[:] = initial_temperature.reshape(-1,1)
 
+sealevel = 0.0
+seafloor = topWall[mesh.data[topWall,2] < sealevel]
+
+gwPressureField.data[topWall] = 0.
+gwPressureField.data[seafloor] = -((mesh.data[seafloor,2]-sealevel)*1.0).reshape(-1,1)
 temperatureField.data[topWall] = Tmin
 temperatureField.data[bottomWall] = Tmax
 # -
@@ -179,6 +184,7 @@ swarm.populate_using_layout( layout=swarmLayout )
 
 # +
 materialIndex  = swarm.add_variable( dataType="int",    count=1 )
+cellCentroid   = swarm.add_variable( dataType="double", count=3 )
 swarmVelocity  = swarm.add_variable( dataType="double", count=3 )
 
 hydraulicDiffusivity    = swarm.add_variable( dataType="double", count=1 )
@@ -202,8 +208,9 @@ for cell in range(0, mesh.elementsLocal):
         # starting from surface and going deeper with each layer
         if cz > z_interp:
             break
-            
+
     materialIndex.data[mask_cell] = lith
+    cellCentroid.data[idx_cell] = cell_centroid
 
 
 # ### Assign material properties
@@ -268,11 +275,11 @@ materialIndex.data[:] = voxel_model_condensed.reshape(-1,1)
 
 # +
 interp.values = grid_list[0]
-swarm_topography = interp((swarm.data[:,1], swarm.data[:,0]))
+swarm_topography = interp((cellCentroid.data[:,1],cellCentroid.data[:,0]))
 
 beta = 9.3e-3
-depth = -1*(swarm.data[:,2] - zmax)
-depth = -1*np.clip(swarm.data[:,2], zmin, 0.0)
+depth = -1.0*(cellCentroid.data[:,2] - swarm_topography)
+depth = np.clip(depth, 0.0, zmax-zmin)
 
 # +
 Storage = 1.
@@ -294,8 +301,8 @@ gMapFn = -g*rho_water*Storage
 
 # +
 # initialise "default values"
-hydraulicDiffusivity.data[:] = kh0[-1]
 fn_hydraulicDiffusivity.data[:] = kh0[-1]
+hydraulicDiffusivity.data[:] = kh0[-1]
 thermalDiffusivity.data[:] = kt0[-1]
 a_exponent.data[:] = a[-1]
 
@@ -376,6 +383,50 @@ for i in range(0, nwells):
         if exception:
             well_xyz[i,2] -= 10
 
+# Recharge rates from [Crosbie _et al._ (2018)](https://doi.org/10.1016/j.jhydrol.2017.08.003)
+
+# +
+recharge_E, recharge_N, recharge_vel, recharge_vel_std = np.loadtxt(data_dir+"recharge_Crosbie2018.csv",
+                                                                    delimiter=',', unpack=True, usecols=(2,3,4,5))
+# convert mm/yr to m/s
+recharge_vel *= 3.17097919838e-11
+recharge_vel_std *= 3.17097919838e-11
+
+mask_recharge = np.zeros_like(recharge_E, dtype=bool)
+mask_recharge += recharge_E < xmin
+mask_recharge += recharge_E > xmax
+mask_recharge += recharge_N < ymin
+mask_recharge += recharge_N > ymax
+mask_recharge += recharge_vel_std <= 0.0
+mask_recharge = np.invert(mask_recharge)
+
+recharge_E       = recharge_E[mask_recharge]
+recharge_N       = recharge_N[mask_recharge]
+recharge_vel     = recharge_vel[mask_recharge]
+recharge_vel_std = recharge_vel_std[mask_recharge]
+
+recharge_Z = np.array(interp(np.c_[recharge_N, recharge_E]))
+
+recharge_xyz = np.c_[recharge_E, recharge_N, recharge_Z]
+
+# -
+
+for i in range(0, recharge_xyz.shape[0]):
+    exception = np.array(True)
+    while exception:
+        try:
+            sim_temperature = temperatureField.evaluate_global(np.atleast_2d(recharge_xyz[i]))
+            if sim_temperature.ravel() > 0:
+                exception = np.array(False)
+        except:
+            pass
+
+        # only the root processor knows if this failed or not
+        comm.Bcast([exception, MPI.BOOL], root=0)
+
+        if exception:
+            recharge_xyz[i,2] -= 10
+
 
 # +
 def fn_kappa(k0, depth, beta):
@@ -419,15 +470,7 @@ def forward_model(x):
     HPproj.solve()
 
     # depth-dependent hydraulic conductivity
-    #fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
-    zCoord = -(uw.function.input()[2] - zmax)
-    kh_eff = hydraulicDiffusivity*(1.0 - zCoord/(58.0 + 1.02*zCoord))**3
-    fn_hydraulicDiffusivity.data[:] = kh_eff.evaluate(swarm)
-    # average out variation within a cell
-    for cell in range(0, mesh.elementsLocal):
-        mask_cell = swarm.owningCell.data == cell
-        idx_cell  = np.nonzero(mask_cell)[0]
-        fn_hydraulicDiffusivity.data[idx_cell] = fn_hydraulicDiffusivity.data[idx_cell].max()
+    fn_hydraulicDiffusivity.data[:] = fn_kappa(hydraulicDiffusivity.data.ravel(), depth, beta).reshape(-1,1)
 
 
     ## Set up groundwater equation
@@ -461,10 +504,15 @@ def forward_model(x):
         sim_dTdz = -1.0*sim_dTdz.ravel()
         misfit += ((well_dTdz - sim_dTdz)**2).sum()
 
+    sim_vel = velocityField.evaluate_global(recharge_xyz)
+    if uw.mpi.rank == 0:
+        sim_vel_mag = np.hypot(*sim_vel.T)
+        misfit += ((recharge_vel - sim_vel_mag)**2/recharge_vel_std**2).sum()
+
 
     # compare priors
     if uw.mpi.rank == 0:
-        # misfit += ((kh - kh0)**2/dkh**2).sum()
+        misfit += ((np.log10(kh) - np.log10(kh0))**2).sum()
         misfit += ((kt - kt0)**2/dkt**2).sum()
         misfit += ((H - H0)**2/dH**2).sum()
 
@@ -504,6 +552,7 @@ heatflowField   = mesh.add_variable( nodeDofCount=3 )
 
 
 # calculate heat flux
+thermalDiffusivity.data[:] = fn_thermalDiffusivity.evaluate(swarm)
 kTproj = uw.utils.MeshVariable_Projection(phiField, thermalDiffusivity, swarm)
 kTproj.solve()
 
