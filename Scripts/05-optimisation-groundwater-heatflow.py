@@ -24,11 +24,13 @@ if uw.mpi.size > 1:
     parser.add_argument('-v', '--verbose', action='store_true', required=False, default=False, help="Verbose output")
     parser.add_argument('--Tmin', type=float, required=False, default=298.0, help="Minimum temperature")
     parser.add_argument('--Tmax', type=float, required=False, default=500.0, help="Maximum temperature")
+    parser.add_argument('-s', '--surrogate', action='store_true', required=False, default=False, help="Use surrogate information if available")
     args = parser.parse_args()
 
 
     data_dir = args.echo
     verbose  = args.verbose
+    surrogate = args.surrogate
     Tmin = args.Tmin
     Tmax = args.Tmax
     Nx, Ny, Nz = args.res # global size
@@ -36,6 +38,7 @@ if uw.mpi.size > 1:
 else:
     data_dir = "../Data/"
     verbose  = True
+    surrogate= False
     Tmin = 298.0
     Tmax = 500.0
     Nx, Ny, Nz = 20,20,50 # global size
@@ -440,7 +443,7 @@ def forward_model(x):
     # check we haven't already got a solution
     dist, idx = mintree.query(x)
 
-    if dist == 0.0:
+    if dist == 0.0 and surrogate:
         misfit = minimiser_misfits[idx]
         if verbose:
             print("using surrogate model, misfit = {}".format(misfit))
@@ -504,12 +507,12 @@ def forward_model(x):
         sim_dTdz = temperatureField.fn_gradient[2].evaluate_global(well_xyz)
         if uw.mpi.rank == 0:
             sim_dTdz = -1.0*sim_dTdz.ravel()
-            misfit += ((well_dTdz - sim_dTdz)**2).sum()
+            misfit += ((well_dTdz - sim_dTdz)**2/0.1**2).sum()
             
         sim_vel = velocityField.evaluate_global(recharge_xyz)
         if uw.mpi.rank == 0:
             sim_vel_mag = np.hypot(*sim_vel.T)
-            misfit += ((recharge_vel - sim_vel_mag)**2/recharge_vel_std**2).sum()
+            misfit += (np.log10(np.abs(recharge_vel - sim_vel_mag))**2).sum()
 
 
         # compare priors

@@ -502,12 +502,12 @@ def forward_model(x):
     sim_dTdz = temperatureField.fn_gradient[2].evaluate_global(well_xyz)
     if uw.mpi.rank == 0:
         sim_dTdz = -1.0*sim_dTdz.ravel()
-        misfit += ((well_dTdz - sim_dTdz)**2).sum()
+        misfit += ((well_dTdz - sim_dTdz)**2/0.1**2).sum()
 
     sim_vel = velocityField.evaluate_global(recharge_xyz)
     if uw.mpi.rank == 0:
         sim_vel_mag = np.hypot(*sim_vel.T)
-        misfit += ((recharge_vel - sim_vel_mag)**2/recharge_vel_std**2).sum()
+        misfit += (np.log10(np.abs(recharge_vel - sim_vel_mag))**2).sum()
 
 
     # compare priors
