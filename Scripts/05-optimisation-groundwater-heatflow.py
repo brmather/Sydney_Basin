@@ -405,14 +405,19 @@ recharge_Z = np.array(interp(np.c_[recharge_N, recharge_E]))
 
 recharge_xyz = np.c_[recharge_E, recharge_N, recharge_Z]
 
-# -
+
+# +
+velocityField.data[:] = 1.0
+hyp = np.sqrt(3.0)
 
 for i in range(0, recharge_xyz.shape[0]):
     exception = np.array(True)
     while exception:
         try:
-            sim_temperature = temperatureField.evaluate_global(np.atleast_2d(recharge_xyz[i]))
-            if sim_temperature.ravel() > 0:
+            sim_velocity = velocityField.evaluate_global(np.atleast_2d(recharge_xyz[i]))
+            sim_velocity_mag = np.sqrt((sim_velocity**2).sum())
+
+            if np.allclose(sim_velocity_mag, hyp):
                 exception = np.array(False)
         except:
             pass
@@ -511,7 +516,7 @@ def forward_model(x):
             
         sim_vel = velocityField.evaluate_global(recharge_xyz)
         if uw.mpi.rank == 0:
-            sim_vel_mag = np.hypot(*sim_vel.T)
+            sim_vel_mag = np.sqrt((sim_vel**2).sum(axis=1))
             misfit += (np.log10(np.abs(recharge_vel - sim_vel_mag))**2).sum()
 
 
@@ -569,7 +574,7 @@ mintree = cKDTree(minimiser_results)
 
 # define bounded optimisation
 bounds_lower = np.hstack([
-    np.full_like(kh0, -20),
+    np.full_like(kh0, -14.5),
     np.full_like(kt0, 0.05),
     np.zeros_like(H0),
     [298.]])
