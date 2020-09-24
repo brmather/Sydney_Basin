@@ -517,7 +517,7 @@ def forward_model(x):
         sim_vel = velocityField.evaluate_global(recharge_xyz)
         if uw.mpi.rank == 0:
             sim_vel_mag = np.sqrt((sim_vel**2).sum(axis=1))
-            misfit += (np.log10(np.abs(recharge_vel - sim_vel_mag))**2).sum()
+            misfit += (((np.log10(recharge_vel) - np.log10(sim_vel_mag))**2)/np.log10(recharge_vel_std)**2).sum()
 
 
         # compare priors
@@ -535,7 +535,7 @@ def forward_model(x):
 
             if verbose:
                 print("\n rank {} in {:.2f} sec misfit = {}\n".format(uw.mpi.rank, time()-ti, misfit))
-    
+
         return misfit
 # -
 
@@ -574,7 +574,7 @@ mintree = cKDTree(minimiser_results)
 
 # define bounded optimisation
 bounds_lower = np.hstack([
-    np.full_like(kh0, -14.5),
+    np.full_like(kh0, -13),
     np.full_like(kt0, 0.05),
     np.zeros_like(H0),
     [298.]])
