@@ -345,6 +345,7 @@ mask_wells += well_E > xmax
 mask_wells += well_N < ymin
 mask_wells += well_N > ymax
 mask_wells += well_dTdz <= 0.0
+mask_wells += well_dTdz > 0.15
 mask_wells = np.invert(mask_wells)
 
 well_E = well_E[mask_wells]
@@ -360,8 +361,6 @@ well_xyz = np.c_[well_E, well_N, well_elevation]
 nwells = well_xyz.shape[0]
 print("number of well observations = {}".format(nwells))
 # -
-
-well_xyz_copy = well_xyz.copy()
 
 for i in range(0, nwells):
     exception = np.array(True)
