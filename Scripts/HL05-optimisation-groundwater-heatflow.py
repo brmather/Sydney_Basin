@@ -566,7 +566,7 @@ def forward_model(x):
             misfit += (((np.log10(recharge_vel) - np.log10(sim_vel_mag))**2)/np.log10(recharge_vel_std)**2).sum()
             print((((np.log10(recharge_vel) - np.log10(sim_vel_mag))**2)/np.log10(recharge_vel_std)**2).sum())
 
-        sim_pressure = pressureField.evaluate_global(gw_xyz)
+        sim_pressure = gwPressureField.evaluate_global(gw_xyz)
         if uw.mpi.rank == 0:
             sim_pressure = sim_pressure.ravel()
             misfit += ((gw_pressure - sim_pressure)**2/gw_pressure_std**2).sum()
