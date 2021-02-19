@@ -298,11 +298,10 @@ depth = np.clip(depth, 0.0, zmax-zmin)
 # +
 Storage = 1.
 rho_water = 1000.
+c_water = 4e3
+coeff = rho_water*c_water
 
-if deformedmesh:
-    g = uw.function.misc.constant((0.,0.,-1.))
-else:
-    g = uw.function.misc.constant((0.,0.,0.))
+g = uw.function.misc.constant((0.,0.,0.))
 
 gwPressureGrad = gwPressureField.fn_gradient
 
@@ -320,7 +319,6 @@ hydraulicDiffusivity.data[:] = kh0[-1]
 thermalDiffusivity.data[:] = kt0[-1]
 a_exponent.data[:] = a[-1]
 
-coeff = 1.0
 fn_thermalDiffusivity = thermalDiffusivity*(298.0/temperatureField)**a_exponent
 fn_source = uw.function.math.dot(-1.0*coeff*velocityField, temperatureField.fn_gradient) + heatProductionField
 
@@ -331,7 +329,7 @@ gwadvDiff = uw.systems.SteadyStateDarcyFlow(
                                             pressureField    = gwPressureField, \
                                             fn_diffusivity   = fn_hydraulicDiffusivity, \
                                             conditions       = [gwPressureBC], \
-                                            fn_bodyforce     = -gMapFn, \
+                                            fn_bodyforce     = (0.0, 0.0, 0.0), \
                                             voronoi_swarm    = swarm, \
                                             swarmVarVelocity = swarmVelocity)
 gwsolver = uw.systems.Solver(gwadvDiff)
