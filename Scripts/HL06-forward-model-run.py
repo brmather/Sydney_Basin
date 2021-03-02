@@ -85,7 +85,7 @@ mesh = uw.mesh.FeMesh_Cartesian( elementType = (elementType),
                                  minCoord    = (xmin,ymin,zmin), 
                                  maxCoord    = (xmax,ymax,zmax)) 
 
-gwPressureField            = mesh.add_variable( nodeDofCount=1 )
+gwHydraulicHead            = mesh.add_variable( nodeDofCount=1 )
 temperatureField           = mesh.add_variable( nodeDofCount=1 )
 temperatureField0          = mesh.add_variable( nodeDofCount=1 )
 velocityField              = mesh.add_variable( nodeDofCount=3 )
@@ -141,7 +141,7 @@ with mesh.deform_mesh():
 topWall = mesh.specialSets["MaxK_VertexSet"]
 bottomWall = mesh.specialSets["MinK_VertexSet"]
 
-gwPressureBC = uw.conditions.DirichletCondition( variable      = gwPressureField, 
+gwPressureBC = uw.conditions.DirichletCondition( variable      = gwHydraulicHead, 
                                                indexSetsPerDof = ( topWall   ) )
 
 temperatureBC = uw.conditions.DirichletCondition( variable        = temperatureField,
@@ -162,15 +162,15 @@ initial_temperature = linear_gradient*(Tmax - Tmin) + Tmin
 initial_temperature = np.clip(initial_temperature, Tmin, Tmax)
 
 
-gwPressureField.data[:]  = initial_pressure.reshape(-1,1)
+gwHydraulicHead.data[:]  = initial_pressure.reshape(-1,1)
 temperatureField.data[:] = initial_temperature.reshape(-1,1)
 
 sealevel = 0.0
 seafloor = topWall[mesh.data[topWall,2] < sealevel]
 
-gwPressureField.data[topWall] = 0.
-gwPressureField.data[seafloor] = -((mesh.data[seafloor,2]-sealevel)*1.0).reshape(-1,1)
-temperatureField.data[topWall] = Tmin
+gwHydraulicHead.data[topWall]     = 0.
+gwHydraulicHead.data[seafloor]    = -((mesh.data[seafloor,2]-sealevel)*1.0).reshape(-1,1)
+temperatureField.data[topWall]    = Tmin
 temperatureField.data[bottomWall] = Tmax
 # -
 
@@ -185,7 +185,14 @@ with np.load(data_dir+"water_table_surface.npz") as npz:
 rgi_wt = interpolate.RegularGridInterpolator((wt_y, wt_x), wt)
 
 wt_interp = rgi_wt(mesh.data[topWall,0:2][:,::-1])
-gwPressureField.data[topWall] = (-wt_interp * 1000.0 * 9.81).reshape(-1,1)
+# gwHydraulicHead.data[topWall] = (-wt_interp * 1000.0 * 9.81).reshape(-1,1)
+
+zCoordFn = uw.function.input()[2]
+yCoordFn = uw.function.input()[1]
+xCoordFn = uw.function.input()[0]
+
+gwHydraulicHead.data[:] = zCoordFn.evaluate(mesh)
+gwHydraulicHead.data[topWall] += (-wt_interp).reshape(-1,1)
 # -
 
 # ## Set up the swarm particles
@@ -303,7 +310,7 @@ coeff = rho_water*c_water
 
 g = uw.function.misc.constant((0.,0.,0.))
 
-gwPressureGrad = gwPressureField.fn_gradient
+gwPressureGrad = gwHydraulicHead.fn_gradient
 
 gMapFn = -g*rho_water*Storage
 # -
@@ -326,7 +333,7 @@ fn_source = uw.function.math.dot(-1.0*coeff*velocityField, temperatureField.fn_g
 # groundwater solver
 gwadvDiff = uw.systems.SteadyStateDarcyFlow(
                                             velocityField    = velocityField, \
-                                            pressureField    = gwPressureField, \
+                                            pressureField    = gwHydraulicHead, \
                                             fn_diffusivity   = fn_hydraulicDiffusivity, \
                                             conditions       = [gwPressureBC], \
                                             fn_bodyforce     = (0.0, 0.0, 0.0), \
@@ -346,6 +353,64 @@ heatsolver = uw.systems.Solver(heateqn)
 # ## Load observations
 #
 # `evaluate_global()` raises an error if the coordinates are outside the domain. The next cells filter the well data.
+#
+# Instead, cast the points as swarm variables for more efficient identification of which are within or outside the model domain.
+
+# +
+# find model elevation
+topWall_xyz = comm.allgather(mesh.data[topWall])
+topWall_xyz = np.vstack(topWall_xyz)
+
+# create downsampled interpolator for surface topography
+interp_downsampled = interpolate.LinearNDInterpolator(topWall_xyz[:,:2], topWall_xyz[:,2])
+
+
+# +
+def sprinkle_observations(obs_xyz, dz=10.0, return_swarm=False, return_index=False):
+    """
+    Place observations on top boundary wall of the mesh - or pretty close to... (parallel safe)
+    """
+    inside_particles_g = np.zeros(obs_xyz.shape[0], dtype=np.int32)
+
+    while not inside_particles_g.all():
+        swarm_well = uw.swarm.Swarm(mesh=mesh, particleEscape=False)
+        particle_index = swarm_well.add_particles_with_coordinates(obs_xyz)
+
+        inside_particles_l = (particle_index >= 0).astype(np.int32)
+        inside_particles_g.fill(0)
+
+        comm.Allreduce([inside_particles_l, MPI.INT], [inside_particles_g, MPI.INT], op=MPI.SUM)
+
+        # print(comm.rank, np.count_nonzero(inside_particles_g == 0))
+        obs_xyz[inside_particles_g == 0, 2] -= dz
+
+    output_tuple = [obs_xyz]
+
+    if return_swarm:
+        output_tuple.append(swarm_well)
+    if return_index:
+        output_tuple.append(particle_index)
+    return output_tuple
+
+def reduce_to_root(vals, particle_index):
+    """
+    Gather values from all processors to the root processor
+    """
+    nparticles = len(particle_index)
+
+    # initialise with very low numbers
+    vl = np.full(nparticles, -999999, np.float32)
+    vg = np.full(nparticles, -999999, np.float32)
+    vl[particle_index > -1] = vals.ravel()
+
+    # finds the max - aka proper value
+    comm.Reduce([vl, MPI.FLOAT], [vg, MPI.FLOAT], op=MPI.MAX, root=0)
+    return vg
+
+
+# -
+
+# Temperature gradients
 
 # +
 # load observations
@@ -361,6 +426,7 @@ mask_wells += well_E > xmax
 mask_wells += well_N < ymin
 mask_wells += well_N > ymax
 mask_wells += well_dTdz <= 0.0
+mask_wells += well_dTdz > 200e-3
 mask_wells = np.invert(mask_wells)
 
 well_E = well_E[mask_wells]
@@ -368,32 +434,15 @@ well_N = well_N[mask_wells]
 well_dTdz = well_dTdz[mask_wells]
 
 # interpolate topography to well locations
-interp.values = grid_list[0]
-well_elevation = np.array(interp(np.c_[well_N, well_E]))
+well_elevation = interp_downsampled(np.c_[well_E, well_N])
 
+# well_elevation = strimesh.interpolate(well_E, well_N, topWall_xyz[:,2])
 well_xyz = np.c_[well_E, well_N, well_elevation]
+well_xyz, swarm_dTdz, index_dTdz = sprinkle_observations(well_xyz, dz=10., return_swarm=True, return_index=True)
 
 nwells = well_xyz.shape[0]
 print("number of well observations = {}".format(nwells))
 # -
-
-well_xyz_copy = well_xyz.copy()
-
-for i in range(0, nwells):
-    exception = np.array(True)
-    while exception:
-        try:
-            sim_temperature = temperatureField.evaluate_global(np.atleast_2d(well_xyz[i]))
-            if sim_temperature.ravel() > 0:
-                exception = np.array(False)
-        except:
-            pass
-        
-        # only the root processor knows if this failed or not
-        comm.Bcast([exception, MPI.BOOL], root=0)
-        
-        if exception:
-            well_xyz[i,2] -= 10
 
 # Recharge rates from [Crosbie _et al._ (2018)](https://doi.org/10.1016/j.jhydrol.2017.08.003)
 
@@ -417,58 +466,33 @@ recharge_N       = recharge_N[mask_recharge]
 recharge_vel     = recharge_vel[mask_recharge]
 recharge_vel_std = recharge_vel_std[mask_recharge]
 
-recharge_Z = np.array(interp(np.c_[recharge_N, recharge_E]))
+recharge_Z = interp_downsampled(np.c_[recharge_E, recharge_N])
 
 recharge_xyz = np.c_[recharge_E, recharge_N, recharge_Z]
-
+recharge_xyz, swarm_recharge, index_recharge = sprinkle_observations(recharge_xyz, dz=10., return_swarm=True, return_index=True)
+print("number of recharge observations = {}".format(recharge_xyz.shape[0]))
 # -
-
-for i in range(0, recharge_xyz.shape[0]):
-    exception = np.array(True)
-    while exception:
-        try:
-            sim_temperature = temperatureField.evaluate_global(np.atleast_2d(recharge_xyz[i]))
-            if sim_temperature.ravel() > 0:
-                exception = np.array(False)
-        except:
-            pass
-
-        # only the root processor knows if this failed or not
-        comm.Bcast([exception, MPI.BOOL], root=0)
-
-        if exception:
-            recharge_xyz[i,2] -= 10
 
 # Hydraulic pressure
 
 # +
 gw_data = np.loadtxt(data_dir+'NGIS_groundwater_levels_SGB.csv', delimiter=',', usecols=(4,5,7,8,9,10), skiprows=1)
-gw_E, gw_N, gw_Z, gw_depth, gw_level, gw_level_std = gw_data.T
+gw_data = gw_data[gw_data[:,5] > 0.1]
+gw_E, gw_N, gw_elevation, gw_depth, gw_level, gw_level_std = gw_data.T
+
+gw_hydraulic_head = gw_elevation - gw_level
+gw_hydraulic_head_std = gw_level_std
+gw_pressure_head = gw_depth - gw_level
+gw_pressure_head_std = gw_level_std
+
+gw_Z = interp_downsampled(np.c_[gw_E, gw_N])
 
 gw_xyz = np.c_[gw_E, gw_N, gw_Z]
-
-gw_pressure = (gw_depth - gw_level)*1000.0*9.81
-gw_pressure_std = gw_level_std*1000.0*9.81
-gw_pressure_std[gw_pressure_std == 0] = np.percentile(gw_level_std, 99)*1000.0*9.81
-
-
-for i in range(0, gw_data.shape[0]):
-    exception = np.array(True)
-    while exception:
-        try:
-            sim_pressure = gwPressureField.evaluate_global(np.atleast_2d(gw_xyz[i]))
-            if sim_pressure.ravel() > 0:
-                exception = np.array(False)
-        except:
-            pass
-
-        # only the root processor knows if this failed or not
-        comm.Bcast([exception, MPI.BOOL], root=0)
-
-        if exception:
-            gw_xyz[i,2] -= 10
-            
+gw_xyz, swarm_gw, index_gw = sprinkle_observations(gw_xyz, dz=10., return_swarm=True, return_index=True)
 gw_xyz[:,2] -= gw_depth
+gw_xyz, swarm_gw, index_gw = sprinkle_observations(gw_xyz, dz=10., return_swarm=True, return_index=True)
+
+print("number of groundwater pressure observations = {}".format(gw_xyz.shape[0]))
 
 
 # +
@@ -530,7 +554,7 @@ def forward_model(x):
     ## Set up heat equation
     if uw.mpi.rank == 0 and verbose:
         print("Solving heat equation...")
-    for its in range(0, 10):
+    for its in range(0, 20):
         temperatureField0.data[:] = temperatureField.data[:]
         heatsolver.solve(nonLinearIterate=False)
 
@@ -542,15 +566,21 @@ def forward_model(x):
 
     # compare to observations
     misfit = np.array(0.0)
-    sim_dTdz = temperatureField.fn_gradient[2].evaluate_global(well_xyz)
+    sim_dTdz = temperatureField.fn_gradient[2].evaluate(swarm_dTdz)
+    sim_dTdz = reduce_to_root(sim_dTdz, index_dTdz)
     if uw.mpi.rank == 0:
         sim_dTdz = -1.0*sim_dTdz.ravel()
         misfit += ((well_dTdz - sim_dTdz)**2/0.1**2).sum()
 
-    sim_vel = velocityField.evaluate_global(recharge_xyz)
+    sim_vel = uw.function.math.dot(velocityField, velocityField).evaluate(swarm_recharge)
+    sim_vel = reduce_to_root(sim_vel, index_recharge)
     if uw.mpi.rank == 0:
-        sim_vel_mag = np.hypot(*sim_vel.T)
-        misfit += (np.log10(np.abs(recharge_vel - sim_vel_mag))**2).sum()
+        misfit += (((np.log10(recharge_vel) - np.log10(sim_vel))**2)/np.log10(recharge_vel_std)**2).sum()
+
+    sim_pressure_head = gwHydraulicHead.evaluate(swarm_gw) - zCoordFn.evaluate(swarm_gw)
+    sim_pressure_head = reduce_to_root(sim_pressure_head, index_gw)
+    if uw.mpi.rank == 0:
+        misfit += ((gw_pressure_head - sim_pressure_head)**2/gw_pressure_head_std**2).sum()
 
 
     # compare priors
@@ -605,9 +635,13 @@ heatflowField.data[:] = temperatureField.fn_gradient.evaluate(mesh) * -phiField.
 rankField = mesh.add_variable( nodeDofCount=1 )
 rankField.data[:] = uw.mpi.rank
 
+pressureField = gwHydraulicHead.copy(deepcopy=True)
+pressureField.data[:] -= zCoordFn.evaluate(mesh)
+
 
 for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', velocityField),
-                                        (xdmf_info_mesh, 'pressureField', gwPressureField),
+                                        (xdmf_info_mesh, 'hydraulicHeadField', gwHydraulicHead),
+                                        (xdmf_info_mesh, 'pressureField', pressureField),
                                         (xdmf_info_mesh, 'temperatureField', temperatureField),
                                         (xdmf_info_mesh, 'heatflowField', heatflowField),
                                         (xdmf_info_mesh, 'rankField', rankField),
@@ -628,3 +662,21 @@ for xdmf_info,save_name,save_object in [(xdmf_info_mesh, 'velocityField', veloci
         field_name = save_name[:-5]+'Field'
         xdmf_info_var = phiField.save(data_dir+field_name+'.h5')
         phiField.xdmf(data_dir+field_name+'.xdmf', xdmf_info_var, field_name, xdmf_info_mesh, "TheMesh")
+
+# +
+xdmf_info_swarm_dTdz     = swarm_dTdz.save(data_dir+'swarm_dTdz.h5')
+xdmf_info_swarm_recharge = swarm_recharge.save(data_dir+'swarm_recharge.h5')
+xdmf_info_swarm_gw       = swarm_gw.save(data_dir+'swarm_gw.h5')
+
+for save_name, this_swarm, swarm_field, index_field in [
+        ('dTdz', swarm_dTdz, well_dTdz, index_dTdz),
+        ('recharge', swarm_recharge, recharge_vel, index_recharge),
+        ('pressure_head', swarm_gw, gw_pressure_head, index_gw)]:
+    
+    xdmf_info_this_swarm = this_swarm.save(data_dir+'swarm_{}.h5'.format(save_name))
+    swarm_field_var = this_swarm.add_variable( dataType="double", count=1 )
+    swarm_field_var.data[:] = swarm_field[index_field > -1].reshape(-1,1)
+    xdmf_info_var = swarm_field_var.save(data_dir+'obs_'+save_name+'.h5')
+    swarm_field_var.xdmf(data_dir+'obs_'+save_name+'.xdmf', xdmf_info_var, save_name,
+                         xdmf_info_this_swarm, 'swarm_{}.h5'.format(save_name))
+
