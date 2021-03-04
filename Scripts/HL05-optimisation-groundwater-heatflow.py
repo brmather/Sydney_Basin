@@ -576,19 +576,19 @@ def forward_model(x):
         sim_dTdz = reduce_to_root(sim_dTdz, index_dTdz)
         if uw.mpi.rank == 0:
             sim_dTdz = -1.0*sim_dTdz.ravel()
-            misfit += ((well_dTdz - sim_dTdz)**2/0.1**2).sum()
+            misfit += (((well_dTdz - sim_dTdz)**2/0.1**2).sum())/well_dTdz.size
             # print(((well_dTdz - sim_dTdz)**2/0.1**2).sum())
             
         sim_vel = uw.function.math.dot(velocityField, velocityField).evaluate(swarm_recharge)
         sim_vel = reduce_to_root(sim_vel, index_recharge)
         if uw.mpi.rank == 0:
-            misfit += (((np.log10(recharge_vel) - np.log10(sim_vel))**2)/np.log10(recharge_vel_std)**2).sum()
+            misfit += ((((np.log10(recharge_vel) - np.log10(sim_vel))**2)/np.log10(recharge_vel_std)**2).sum())/recharge_vel.size
             # print((((np.log10(recharge_vel) - np.log10(sim_vel))**2)/np.log10(recharge_vel_std)**2).sum())
 
         sim_pressure_head = gwHydraulicHead.evaluate(swarm_gw) - zCoordFn.evaluate(swarm_gw)
         sim_pressure_head = reduce_to_root(sim_pressure_head, index_gw)
         if uw.mpi.rank == 0:
-            misfit += ((gw_pressure_head - sim_pressure_head)**2/gw_pressure_head_std**2).sum()
+            misfit += (((gw_pressure_head - sim_pressure_head)**2/gw_pressure_head_std**2).sum())/gw_pressure_head.size
             # print(((gw_pressure_head - sim_pressure_head)**2/gw_pressure_head_std**2).sum())
 
         # compare priors
@@ -638,14 +638,14 @@ mintree = cKDTree(minimiser_results)
 
 # +
 # test forward model
-fm0 = forward_model(x)
-fm1 = forward_model(x+dx)
-print("finite difference = {}".format(fm1-fm0))
+#fm0 = forward_model(x)
+#fm1 = forward_model(x+dx)
+#print("finite difference = {}".format(fm1-fm0))
 
 
 # define bounded optimisation
 bounds_lower = np.hstack([
-    np.full_like(kh0, -15),
+    np.full_like(kh0, -13),
     np.full_like(kt0, 0.05),
     np.zeros_like(H0),
     [298.]])

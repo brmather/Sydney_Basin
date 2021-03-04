@@ -485,6 +485,13 @@ def forward_model(x):
 with np.load(minres, 'r') as npz:
     x = npz['x']
 
+
+x_opt[1] = -7
+x_opt[2] = -7
+x_opt[4] = -7
+x_opt[5] = -7
+x_opt[10]= -10.1
+
 fm0 = forward_model(x)
 # -
 
