@@ -24,6 +24,7 @@ if uw.mpi.size > 1:
     parser.add_argument('-v', '--verbose', action='store_true', required=False, default=False, help="Verbose output")
     parser.add_argument('--Tmin', type=float, required=False, default=298.0, help="Minimum temperature")
     parser.add_argument('--Tmax', type=float, required=False, default=500.0, help="Maximum temperature")
+    parser.add_argument('-c', '--checkpoint', type=int, required=False, default=0, help="Store checkpoints")
     parser.add_argument('-s', '--surrogate', action='store_true', required=False, default=False, help="Use surrogate information if available")
     args = parser.parse_args()
 
@@ -34,6 +35,7 @@ if uw.mpi.size > 1:
     Tmin = args.Tmin
     Tmax = args.Tmax
     Nx, Ny, Nz = args.res # global size
+    n_checkpoints = args.checkpoint
 
 else:
     data_dir = "../Data/"
@@ -42,6 +44,7 @@ else:
     Tmin = 298.0
     Tmax = 500.0
     Nx, Ny, Nz = 20,20,50 # global size
+    n_checkpoints = 0
 # -
 
 # ## Import geological surfaces
@@ -498,7 +501,7 @@ def fn_kappa(k0, depth, beta):
     return k0*(1.0 - depth/(58.0+1.02*depth))**3
 
 
-def forward_model(x):
+def forward_model(x, niter=0):
     """ 
     Variables in x:
     - k_h  : hydraulic conductivity
@@ -599,6 +602,14 @@ def forward_model(x):
 
         comm.Bcast([misfit, MPI.DOUBLE], root=0)
 
+        if n_checkpoints:
+            if niter % n_checkpoints == 0:
+                temperatureField.save(data_dir+'checkpoints/temperatureField_{:06d}.h5'.format(niter))
+                gwHydraulicHead.save(data_dir+'checkpoints/hydraulicHeadField_{:06d}.h5'.format(niter))
+                velocityField.save(data_dir+'checkpoints/velocityField_{:06d}.h5'.format(niter))
+
+            niter += 1
+
         if uw.mpi.rank == 0:
             with open(data_dir+'minimiser_results.csv', 'a') as f:
                 rowwriter = csv.writer(f, delimiter=',')
@@ -608,11 +619,14 @@ def forward_model(x):
                 print("\n rank {} in {:.2f} sec misfit = {}\n".format(uw.mpi.rank, time()-ti, misfit))
 
         return misfit
-# -
 
+
+# +
+niter = np.array(0)
 
 x = np.hstack([np.log10(kh0), kt0, H0*1e6, [Tmax]])
 dx = 0.01*x
+# -
 
 # ## Initialise output table
 #
@@ -672,7 +686,7 @@ def obj_grad(x):
 # BUT TNC fails to converge because the line search is crap.
 
 # +
-res = optimize.differential_evolution(forward_model, bounds=bounds, popsize=2, seed=42, disp=True)
+res = optimize.differential_evolution(forward_model, bounds=bounds, args=(niter,), popsize=2, seed=42, disp=True)
 print(res)
 
 if uw.mpi.rank == 0:
