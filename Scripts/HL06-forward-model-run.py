@@ -302,6 +302,9 @@ beta = 9.3e-3
 depth = -1.0*(cellCentroid.data[:,2] - swarm_topography)
 depth = np.clip(depth, 0.0, zmax-zmin)
 
+depth_mesh = -1.0*(mesh.data[:,2] - mesh_topography)
+depth_mesh = np.clip(depth_mesh, 0.0, zmax-zmin)
+
 # +
 Storage = 1.
 rho_water = 1000.
@@ -498,7 +501,13 @@ print("number of groundwater pressure observations = {}".format(gw_xyz.shape[0])
 # +
 def fn_kappa(k0, depth, beta):
     """ Wei et al. (1995) """
-    return k0*(1.0 - depth/(58.0+1.02*depth))**3
+    # return k0*(1.0 - depth/(58.0+1.02*depth))**3
+    return k0
+
+
+def fn_porosity(depth, phi0, m, n):
+    """ Chen et al. (2020) """
+    return phi0/(1.0 + m*depth)**n
 
 
 def forward_model(x):
@@ -563,6 +572,9 @@ def forward_model(x):
         comm.Allreduce([Tdiff, MPI.DOUBLE], [Tdiff_all, MPI.DOUBLE], op=MPI.MAX)
         if Tdiff_all < 0.01:
             break
+
+    ## calculate velocity from Darcy velocity
+    velocityField.data[:] /= np.clip(fn_porosity(depth_mesh*1e-3, 0.474, 0.071, 5.989), 0.0, 1.0).reshape(-1,1)
 
     # compare to observations
     misfit = np.array(0.0)

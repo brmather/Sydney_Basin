@@ -296,10 +296,14 @@ for index in matIndex:
 # +
 interp.values = grid_list[0]
 swarm_topography = interp((cellCentroid.data[:,1],cellCentroid.data[:,0]))
+mesh_topography  = interp((mesh.data[:,1], mesh.data[:,0]))
 
 beta = 9.3e-3
 depth = -1.0*(cellCentroid.data[:,2] - swarm_topography)
 depth = np.clip(depth, 0.0, zmax-zmin)
+
+depth_mesh = -1.0*(mesh.data[:,2] - mesh_topography)
+depth_mesh = np.clip(depth_mesh, 0.0, zmax-zmin)
 
 # +
 Storage = 1.
@@ -498,7 +502,13 @@ print("number of groundwater pressure observations = {}".format(gw_xyz.shape[0])
 # +
 def fn_kappa(k0, depth, beta):
     """ Wei et al. (1995) """
-    return k0*(1.0 - depth/(58.0+1.02*depth))**3
+    # return k0*(1.0 - depth/(58.0+1.02*depth))**3
+    return k0
+
+
+def fn_porosity(depth, phi0, m, n):
+    """ Chen et al. (2020) """
+    return phi0/(1.0 + m*depth)**n
 
 
 def forward_model(x, niter=0):
@@ -554,6 +564,8 @@ def forward_model(x, niter=0):
             print("Solving grounwater equation...")
         gwsolver.solve()
 
+        ## calculate velocity from Darcy velocity
+        velocityField.data[:] /= np.clip(fn_porosity(depth_mesh*1e-3, 0.474, 0.071, 5.989), 0.0, 1.0).reshape(-1,1)
 
         # temperature-dependent conductivity
         temperatureField.data[:] = np.clip(temperatureField.data, Tmin, Tmax)
@@ -652,9 +664,9 @@ mintree = cKDTree(minimiser_results)
 
 # +
 # test forward model
-#fm0 = forward_model(x)
-#fm1 = forward_model(x+dx)
-#print("finite difference = {}".format(fm1-fm0))
+# fm0 = forward_model(x)
+# fm1 = forward_model(x+dx)
+# print("finite difference = {}".format(fm1-fm0))
 
 
 # define bounded optimisation
@@ -838,7 +850,7 @@ for save_name, this_swarm, swarm_field, index_field in [
         ('dTdz', swarm_dTdz, well_dTdz, index_dTdz),
         ('recharge', swarm_recharge, recharge_vel, index_recharge),
         ('pressure_head', swarm_gw, gw_pressure_head, index_gw)]:
-    
+
     xdmf_info_this_swarm = this_swarm.save(data_dir+'swarm_{}.h5'.format(save_name))
     swarm_field_var = this_swarm.add_variable( dataType="double", count=1 )
     swarm_field_var.data[:] = swarm_field[index_field > -1].reshape(-1,1)
