@@ -671,7 +671,7 @@ mintree = cKDTree(minimiser_results)
 
 # define bounded optimisation
 bounds_lower = np.hstack([
-    np.full_like(kh0, -13),
+    np.full_like(kh0, -15),
     np.full_like(kt0, 0.05),
     np.zeros_like(H0),
     [298.]])
