@@ -347,7 +347,7 @@ gwsolver = uw.systems.Solver(gwadvDiff)
 # heatflow solver
 heateqn = uw.systems.SteadyStateHeat( temperatureField = temperatureField, \
                                       fn_diffusivity   = fn_thermalDiffusivity, \
-                                      fn_heating       = fn_source, \
+                                      fn_heating       = heatProduction, \
                                       conditions       = temperatureBC \
                                       )
 heatsolver = uw.systems.Solver(heateqn)
