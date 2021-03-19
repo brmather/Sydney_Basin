@@ -846,18 +846,32 @@ xdmf_info_swarm_dTdz     = swarm_dTdz.save(data_dir+'swarm_dTdz.h5')
 xdmf_info_swarm_recharge = swarm_recharge.save(data_dir+'swarm_recharge.h5')
 xdmf_info_swarm_gw       = swarm_gw.save(data_dir+'swarm_gw.h5')
 
-for save_name, this_swarm, swarm_field, index_field in [
-        ('dTdz', swarm_dTdz, well_dTdz, index_dTdz),
-        ('recharge', swarm_recharge, recharge_vel, index_recharge),
-        ('pressure_head', swarm_gw, gw_pressure_head, index_gw)]:
+# interpolate to swarm variables (again)
+sim_dTdz = temperatureField.fn_gradient[2].evaluate(swarm_dTdz)
+sim_vel = uw.function.math.dot(velocityField, velocityField).evaluate(swarm_recharge)
+sim_pressure_head = gwHydraulicHead.evaluate(swarm_gw) - zCoordFn.evaluate(swarm_gw)
+
+
+for save_name, this_swarm, swarm_obs, swarm_sim, index_field in [
+        ('dTdz', swarm_dTdz, well_dTdz, sim_dTdz, index_dTdz),
+        ('recharge', swarm_recharge, recharge_vel, sim_vel, index_recharge),
+        ('pressure_head', swarm_gw, gw_pressure_head, sim_pressure_head, index_gw)]:
 
     xdmf_info_this_swarm = this_swarm.save(data_dir+'swarm_{}.h5'.format(save_name))
-    swarm_field_var = this_swarm.add_variable( dataType="double", count=1 )
-    swarm_field_var.data[:] = swarm_field[index_field > -1].reshape(-1,1)
-    xdmf_info_var = swarm_field_var.save(data_dir+'obs_'+save_name+'.h5')
-    swarm_field_var.xdmf(data_dir+'obs_'+save_name+'.xdmf', xdmf_info_var, save_name,
+
+    # save obs
+    swarm_obs_var = this_swarm.add_variable( dataType="double", count=1 )
+    swarm_obs_var.data[:] = swarm_obs[index_field > -1].reshape(-1,1)
+    xdmf_info_var = swarm_obs_var.save(data_dir+'obs_'+save_name+'.h5')
+    swarm_obs_var.xdmf(data_dir+'obs_'+save_name+'.xdmf', xdmf_info_var, save_name,
                          xdmf_info_this_swarm, 'swarm_{}.h5'.format(save_name))
 
+    # save sim
+    swarm_sim_var = this_swarm.add_variable( dataType="double", count=1 )
+    swarm_sim_var.data[:] = swarm_sim.reshape(-1,1)
+    xdmf_info_var = swarm_sim_var.save(data_dir+'sim_'+save_name+'.h5')
+    swarm_sim_var.xdmf(data_dir+'sim_'+save_name+'.xdmf', xdmf_info_var, save_name,
+                         xdmf_info_this_swarm, 'swarm_{}.h5'.format(save_name))
 # -
 
 # ## Save minimiser results
